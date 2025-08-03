@@ -9,7 +9,7 @@ fn main() -> eframe::Result {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .format_timestamp(None)
-        .format_target(false)
+        .format_target(true)
         .init();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([640.0, 480.0]),

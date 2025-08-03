@@ -1,10 +1,10 @@
 use std::{
-    io::{Read, Write},
-    net::{Shutdown, TcpStream, ToSocketAddrs},
-    time::Duration,
+    io::{ErrorKind, Read, Write},
+    net::{Shutdown, ToSocketAddrs},
 };
 
 use anyhow::{Context, Result, bail};
+use mio::net::TcpStream;
 
 use crate::hex_char_to_byte;
 
@@ -21,13 +21,11 @@ impl GdbStream {
     pub fn connect<A: ToSocketAddrs>(&mut self, address: A) -> Result<()> {
         let addr = address.to_socket_addrs()?.next().context("No socket address found")?;
 
-        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
-        stream.set_read_timeout(Some(Duration::from_secs(1)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(1)))?;
-
+        let stream = TcpStream::connect(addr).context("Failed to open TCP connection")?;
+        stream.set_nodelay(true)?;
         self.stream = Some(stream);
-        self.send_ack()?;
-        self.receive_ack()?;
+        self.send_ack().context("Failed to send initial ACK")?;
+        self.receive_ack().context("Failed to receive initial ACK")?;
         Ok(())
     }
 
@@ -56,7 +54,20 @@ impl GdbStream {
             bail!("Not connected to GDB server");
         };
         let mut buf = [0; 1];
-        stream.read_exact(&mut buf)?;
+        loop {
+            let Err(e) = stream.read_exact(&mut buf) else {
+                break;
+            };
+            let kind = e.kind();
+            match kind {
+                ErrorKind::WouldBlock => {
+                    continue;
+                }
+                _ => {
+                    bail!("Failed to read ACK from GDB server: {kind}");
+                }
+            }
+        }
         if buf[0] != b'+' {
             bail!("Failed to receive ACK from GDB server, got: {}", buf[0] as char);
         }
@@ -95,7 +106,18 @@ impl GdbStream {
         let mut buf = [0; 128];
         let mut vec = Vec::new();
         loop {
-            let bytes_read = stream.read(&mut buf).context("Failed to read from GDB server")?;
+            let bytes_read = loop {
+                match stream.read(&mut buf) {
+                    Ok(n) => break n,
+                    Err(e) => match e.kind() {
+                        ErrorKind::WouldBlock => continue,
+                        _ => {
+                            bail!("Failed to read from GDB server: {e}");
+                        }
+                    },
+                }
+            };
+            // let bytes_read = stream.read(&mut buf).context("Failed to read from GDB server")?;
             if bytes_read == 0 {
                 bail!("Connection closed by GDB server");
             }

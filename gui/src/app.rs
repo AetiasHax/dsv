@@ -53,11 +53,11 @@ impl eframe::App for DzvApp {
                     self.send_command(PhCommand::ContinueExecution);
                 }
 
-                let status = self.client.state.lock().unwrap();
+                let state = self.client.state.lock().unwrap();
 
-                let x = status.x;
-                let y = status.y;
-                let z = status.z;
+                let x = state.x;
+                let y = state.y;
+                let z = state.z;
                 ui.label(format!("x: {x:x?}"));
                 ui.label(format!("y: {y:x?}"));
                 ui.label(format!("z: {z:x?}"));
