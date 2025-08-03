@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::hex_char_to_byte;
 
+#[derive(Default)]
 pub struct GdbStream {
     stream: Option<TcpStream>,
 }
@@ -37,15 +38,20 @@ impl GdbStream {
         Ok(())
     }
 
-    fn send_ack(&mut self) -> Result<()> {
+    pub fn is_connected(&self) -> bool {
+        self.stream.is_some()
+    }
+
+    pub fn send_ack(&mut self) -> Result<()> {
         let Some(ref mut stream) = self.stream else {
             bail!("Not connected to GDB server");
         };
+        log::debug!("Sending ACK to GDB server");
         stream.write_all(b"+")?;
         Ok(())
     }
 
-    fn receive_ack(&mut self) -> Result<()> {
+    pub fn receive_ack(&mut self) -> Result<()> {
         let Some(ref mut stream) = self.stream else {
             bail!("Not connected to GDB server");
         };
@@ -54,6 +60,16 @@ impl GdbStream {
         if buf[0] != b'+' {
             bail!("Failed to receive ACK from GDB server, got: {}", buf[0] as char);
         }
+        log::debug!("Received ACK from GDB server");
+        Ok(())
+    }
+
+    pub fn receive_ok(&mut self) -> Result<()> {
+        let response = self.receive_packet()?;
+        if response != "OK" {
+            bail!("Expected 'OK' response, got: {}", response);
+        }
+        log::debug!("Received OK from GDB server");
         Ok(())
     }
 
@@ -62,10 +78,11 @@ impl GdbStream {
             bail!("Not connected to GDB server");
         };
 
+        log::debug!("Sending packet: {packet}");
+
         let checksum = packet.as_bytes().iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
         let packet_with_checksum = format!("${packet}#{checksum:02x}");
         stream.write_all(packet_with_checksum.as_bytes()).context("Failed to send packet")?;
-        self.receive_ack()?;
 
         Ok(())
     }
@@ -112,7 +129,9 @@ impl GdbStream {
             bail!("Checksum mismatch: expected {expected_checksum:02x}, got {actual_checksum:02x}");
         }
 
-        self.send_ack()?;
-        String::from_utf8(packet.to_vec()).context("Failed to parse GDB response")
+        let response =
+            String::from_utf8(packet.to_vec()).context("Failed to parse GDB response")?;
+        log::debug!("Received packet: {response}");
+        Ok(response)
     }
 }
