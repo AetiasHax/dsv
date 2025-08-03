@@ -63,6 +63,8 @@ impl PhClient {
             });
 
             let mut next_time = Instant::now();
+            let mut frame_count = 0;
+            let mut last_fps_report = Instant::now();
             while gdb_client.is_connected() {
                 if let Ok(cmd) = rx.try_recv() {
                     state.lock().unwrap().handle_command(cmd, &mut gdb_client).unwrap_or_else(
@@ -76,6 +78,14 @@ impl PhClient {
                 state.lock().unwrap().update(&mut gdb_client).unwrap_or_else(|e| {
                     log::error!("Failed to update state: {e}");
                 });
+
+                frame_count += 1;
+                if last_fps_report.elapsed() >= Duration::from_secs(1) {
+                    log::info!("FPS: {frame_count}");
+                    frame_count = 0;
+                    last_fps_report = Instant::now();
+                }
+
                 let time = Instant::now();
                 next_time += Duration::from_nanos(
                     (time - next_time).as_nanos().next_multiple_of(Self::FRAME_TIME.as_nanos())
