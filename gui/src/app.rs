@@ -1,98 +1,76 @@
-use std::thread::JoinHandle;
+use std::net::ToSocketAddrs;
 
-use eframe::egui;
+use anyhow::{Context, Result};
+use dzv_core::gdb::client::GdbClient;
+use eframe::egui::{self, Color32};
 
-use crate::client::ph::{PhClient, PhCommand};
+use crate::views::{View, ph};
 
 pub struct DzvApp {
     address: String,
-    client: PhClient,
-    update_thread: Option<JoinHandle<()>>,
+    view: Option<Box<dyn View>>,
 }
 
 impl Default for DzvApp {
     fn default() -> Self {
-        DzvApp {
-            address: "127.0.0.1:3333".to_string(),
-            client: PhClient::new(),
-            update_thread: None,
-        }
+        DzvApp { address: "127.0.0.1:3333".to_string(), view: None }
     }
 }
 
 impl eframe::App for DzvApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("dzv");
+        ctx.request_repaint();
 
-            ui.separator();
-            ui.add_enabled_ui(!self.client.is_connected(), |ui| {
-                ui.label("Connect to GDB server:");
+        egui::TopBottomPanel::top("dzv_top_panel")
+            .frame(egui::Frame::new().inner_margin(4).fill(Color32::from_gray(20)))
+            .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.text_edit_singleline(&mut self.address);
                     ui.label("Address");
+                    egui::TextEdit::singleline(&mut self.address).desired_width(150.0).show(ui);
+                    if self.view.is_none() {
+                        if ui.button("Connect").clicked() {
+                            if let Err(e) = self.connect() {
+                                log::error!("Failed to connect: {e}");
+                            }
+                        }
+                    } else if ui.button("Disconnect").clicked() {
+                        if let Some(view) = &mut self.view {
+                            match view.exit() {
+                                Ok(_) => self.view = None,
+                                Err(e) => log::error!("Failed to disconnect: {e}"),
+                            }
+                        }
+                    }
                 });
             });
-            if !self.client.is_connected() {
-                if ui.button("Connect").clicked() {
-                    self.connect();
-                }
-            } else if ui.button("Disconnect").clicked() {
-                log::info!("Disconnecting from GDB server");
-                self.send_command(PhCommand::Disconnect);
-            }
-
-            if self.client.is_connected() {
-                ui.separator();
-                if ui.button("Stop Execution").clicked() {
-                    log::info!("Stopping execution on GDB server");
-                    self.send_command(PhCommand::StopExecution);
-                }
-                if ui.button("Continue Execution").clicked() {
-                    log::info!("Continuing execution on GDB server");
-                    self.send_command(PhCommand::ContinueExecution);
-                }
-
-                let state = self.client.state.lock().unwrap();
-
-                let x = state.x;
-                let y = state.y;
-                let z = state.z;
-                ui.label(format!("x: {x:x?}"));
-                ui.label(format!("y: {y:x?}"));
-                ui.label(format!("z: {z:x?}"));
-            }
-        });
+        if let Some(view) = self.view.as_mut() {
+            view.render(ctx);
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if self.client.is_connected() {
-            log::info!("Disconnecting from GDB server on exit");
-            self.send_command(PhCommand::Disconnect);
-        }
-        if let Some(thread) = self.update_thread.take() {
-            log::info!("Waiting for update thread to finish");
-            let _ = thread.join();
+        if let Some(mut view) = self.view.take() {
+            view.exit().context("Failed to exit view").unwrap();
         }
     }
 }
 
 impl DzvApp {
-    fn connect(&mut self) {
+    fn connect(&mut self) -> Result<()> {
         log::info!("Connecting to GDB server at {}", self.address);
-        match self.client.connect(&self.address) {
-            Ok(thread) => {
-                self.update_thread = Some(thread);
-            }
-            Err(e) => {
-                log::error!("Failed to connect to GDB server: {e}");
-            }
-        }
-    }
 
-    fn send_command(&mut self, cmd: PhCommand) {
-        if let Err(e) = self.client.send_command(cmd) {
-            log::error!("{e}");
-        }
+        let addr = self
+            .address
+            .to_socket_addrs()
+            .context("Failed to resolve address")?
+            .next()
+            .context("No socket address found")?;
+
+        let mut gdb_client = GdbClient::new();
+        gdb_client.connect(addr)?;
+        gdb_client.continue_execution()?;
+        // TODO: Ask emulator which game is running
+        self.view = Some(Box::new(ph::View::new(gdb_client)));
+        Ok(())
     }
 }

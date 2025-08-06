@@ -1,4 +1,6 @@
 pub mod gdb;
+pub mod state;
+pub mod types;
 
 pub(crate) fn hex_char_to_byte(c: char) -> u8 {
     match c {

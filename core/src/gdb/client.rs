@@ -73,6 +73,12 @@ impl GdbClient {
         Ok(u32::from_le_bytes(buf))
     }
 
+    pub fn read_u16(&mut self, address: u32) -> Result<u16> {
+        let mut buf = [0; 2];
+        self.read_slice(address, &mut buf)?;
+        Ok(u16::from_le_bytes(buf))
+    }
+
     pub fn continue_execution(&mut self) -> Result<()> {
         self.stream.send_packet("c")?;
         self.stream.receive_ack()?;

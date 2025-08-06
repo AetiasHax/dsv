@@ -1,5 +1,6 @@
 mod app;
 mod client;
+mod views;
 
 use eframe::egui;
 
