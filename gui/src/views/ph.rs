@@ -3,7 +3,7 @@ use dzv_core::{
     gdb::client::GdbClient,
     state::ph::{self, PhActorInstance},
 };
-use eframe::egui::{self, Color32};
+use eframe::egui::{self};
 
 use crate::client::{Client, Command};
 
@@ -25,7 +25,7 @@ impl View {
 }
 
 impl super::View for View {
-    fn render_side_panel(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+    fn render_side_panel(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().max_width(100.0).show(ui, |ui| {
             ui.with_layout(
                 egui::Layout::top_down(egui::Align::LEFT).with_cross_justify(true),

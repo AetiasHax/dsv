@@ -19,7 +19,7 @@ pub struct LoadTypesTask {
 }
 
 pub struct LoadTypesTaskOptions {
-    pub decomp_root: PathBuf,
+    pub project_root: PathBuf,
     pub include_paths: Vec<PathBuf>,
     pub ignore_paths: Vec<PathBuf>,
     pub types: Arc<Mutex<type_crawler::Types>>,
@@ -28,7 +28,7 @@ pub struct LoadTypesTaskOptions {
 impl LoadTypesTask {
     pub fn new(options: LoadTypesTaskOptions) -> Self {
         LoadTypesTask {
-            decomp_root: options.decomp_root,
+            decomp_root: options.project_root,
             include_paths: options.include_paths,
             ignore_paths: options.ignore_paths,
             types: options.types,

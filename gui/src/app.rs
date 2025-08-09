@@ -1,5 +1,6 @@
 use std::{
     net::ToSocketAddrs,
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -8,17 +9,16 @@ use dzv_core::gdb::client::GdbClient;
 use eframe::egui::{self, Color32, Widget};
 
 use crate::{
+    config::Config,
     tasks::load_types::{LoadTypesTask, LoadTypesTaskOptions},
     views::{View, ph},
 };
 
 pub struct DzvApp {
-    address: String,
+    config_path: Option<PathBuf>,
+    config: Config,
 
     project_modal_open: bool,
-    project_path: String,
-    include_paths: Vec<String>,
-    ignore_paths: Vec<String>,
     types: Arc<Mutex<type_crawler::Types>>,
     load_types_task: Option<LoadTypesTask>,
 
@@ -28,12 +28,10 @@ pub struct DzvApp {
 impl Default for DzvApp {
     fn default() -> Self {
         DzvApp {
-            address: "127.0.0.1:3333".to_string(),
+            config_path: None,
+            config: Config::new(),
 
             project_modal_open: false,
-            project_path: String::new(),
-            include_paths: vec![],
-            ignore_paths: vec![],
             types: Arc::new(Mutex::new(type_crawler::Types::new())),
             load_types_task: None,
 
@@ -50,10 +48,25 @@ impl eframe::App for DzvApp {
             .frame(egui::Frame::new().inner_margin(4).fill(Color32::from_gray(20)))
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    egui::TextEdit::singleline(&mut self.address)
+                    if ui.button("Open").clicked() {
+                        let file =
+                            rfd::FileDialog::new().add_filter("dzv project", &["toml"]).pick_file();
+                        if let Some(file) = file {
+                            self.load_config(file);
+                        }
+                    }
+
+                    ui.separator();
+
+                    if egui::TextEdit::singleline(&mut self.config.gdb.address)
                         .desired_width(100.0)
                         .hint_text("Address")
-                        .show(ui);
+                        .show(ui)
+                        .response
+                        .lost_focus()
+                    {
+                        self.save_config();
+                    }
                     if self.view.is_none() {
                         if ui.button("Connect").clicked() {
                             if let Err(e) = self.connect() {
@@ -77,10 +90,15 @@ impl eframe::App for DzvApp {
                         if let Some(mut task) = self.load_types_task.take() {
                             task.terminate();
                         }
+                        let project_root = self.config.types.project_root.clone().into();
+                        let include_paths =
+                            self.config.types.include_paths.iter().map(|s| s.into()).collect();
+                        let ignore_paths =
+                            self.config.types.ignore_paths.iter().map(|s| s.into()).collect();
                         let options = LoadTypesTaskOptions {
-                            decomp_root: self.project_path.clone().into(),
-                            include_paths: self.include_paths.iter().map(|s| s.into()).collect(),
-                            ignore_paths: self.ignore_paths.iter().map(|s| s.into()).collect(),
+                            project_root,
+                            include_paths,
+                            ignore_paths,
                             types: self.types.clone(),
                         };
                         let mut task = LoadTypesTask::new(options);
@@ -121,10 +139,15 @@ impl eframe::App for DzvApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.project_modal_open {
                 egui::Window::new("Configure project").show(ctx, |ui| {
-                    egui::TextEdit::singleline(&mut self.project_path)
+                    if egui::TextEdit::singleline(&mut self.config.types.project_root)
                         .desired_width(200.0)
                         .hint_text("Project path")
-                        .show(ui);
+                        .show(ui)
+                        .response
+                        .lost_focus()
+                    {
+                        self.save_config();
+                    }
                     ui.separator();
                     let mut remove_index = None;
                     egui_extras::TableBuilder::new(ui)
@@ -133,13 +156,20 @@ impl eframe::App for DzvApp {
                         .column(egui_extras::Column::exact(220.0))
                         .column(egui_extras::Column::exact(50.0))
                         .body(|mut body| {
-                            for i in 0..self.include_paths.len() {
+                            for i in 0..self.config.types.include_paths.len() {
                                 body.row(20.0, |mut row| {
                                     row.col(|ui| {
-                                        egui::TextEdit::singleline(&mut self.include_paths[i])
-                                            .desired_width(200.0)
-                                            .hint_text("Include path")
-                                            .show(ui);
+                                        if egui::TextEdit::singleline(
+                                            &mut self.config.types.include_paths[i],
+                                        )
+                                        .desired_width(200.0)
+                                        .hint_text("Include path")
+                                        .show(ui)
+                                        .response
+                                        .lost_focus()
+                                        {
+                                            self.save_config();
+                                        }
                                     });
                                     row.col(|ui| {
                                         if egui::Button::new("Remove")
@@ -155,13 +185,14 @@ impl eframe::App for DzvApp {
                             body.row(20.0, |mut row| {
                                 row.col(|ui| {
                                     if ui.button("Add include path").clicked() {
-                                        self.include_paths.push(String::new());
+                                        self.config.types.include_paths.push(String::new());
                                     }
                                 });
                             });
                         });
                     if let Some(index) = remove_index {
-                        self.include_paths.remove(index);
+                        self.config.types.include_paths.remove(index);
+                        self.save_config();
                     }
                     ui.separator();
                     let mut remove_index = None;
@@ -171,13 +202,20 @@ impl eframe::App for DzvApp {
                         .column(egui_extras::Column::exact(220.0))
                         .column(egui_extras::Column::exact(50.0))
                         .body(|mut body| {
-                            for i in 0..self.ignore_paths.len() {
+                            for i in 0..self.config.types.ignore_paths.len() {
                                 body.row(20.0, |mut row| {
                                     row.col(|ui| {
-                                        egui::TextEdit::singleline(&mut self.ignore_paths[i])
-                                            .desired_width(200.0)
-                                            .hint_text("Ignore path")
-                                            .show(ui);
+                                        if egui::TextEdit::singleline(
+                                            &mut self.config.types.ignore_paths[i],
+                                        )
+                                        .desired_width(200.0)
+                                        .hint_text("Ignore path")
+                                        .show(ui)
+                                        .response
+                                        .lost_focus()
+                                        {
+                                            self.save_config();
+                                        }
                                     });
                                     row.col(|ui| {
                                         if egui::Button::new("Remove")
@@ -193,13 +231,22 @@ impl eframe::App for DzvApp {
                             body.row(20.0, |mut row| {
                                 row.col(|ui| {
                                     if ui.button("Add ignore path").clicked() {
-                                        self.ignore_paths.push(String::new());
+                                        self.config.types.ignore_paths.push(String::new());
                                     }
                                 });
                             });
                         });
                     if let Some(index) = remove_index {
-                        self.ignore_paths.remove(index);
+                        self.config.types.ignore_paths.remove(index);
+                        self.save_config();
+                    }
+                    if ui.button("Save").clicked() {
+                        let file =
+                            rfd::FileDialog::new().add_filter("dzv config", &["toml"]).save_file();
+                        if let Some(file) = file {
+                            self.config_path = Some(file);
+                            self.save_config();
+                        }
                     }
                 });
             }
@@ -218,10 +265,34 @@ impl eframe::App for DzvApp {
 }
 
 impl DzvApp {
+    fn save_config(&self) {
+        let Some(path) = &self.config_path else {
+            return;
+        };
+        self.config.save_to_file(path).unwrap_or_else(|e| {
+            log::error!("Failed to save config: {e}");
+        });
+    }
+
+    fn load_config(&mut self, path: PathBuf) {
+        match Config::load_from_file(&path) {
+            Ok(config) => {
+                log::info!("Loaded config from {}", path.display());
+                self.config = config;
+                self.config_path = Some(path);
+            }
+            Err(e) => {
+                log::error!("Failed to load config from {}: {e}", path.display());
+            }
+        }
+    }
+
     fn connect(&mut self) -> Result<()> {
-        log::info!("Connecting to GDB server at {}", self.address);
+        log::info!("Connecting to GDB server at {}", self.config.gdb.address);
 
         let addr = self
+            .config
+            .gdb
             .address
             .to_socket_addrs()
             .context("Failed to resolve address")?
