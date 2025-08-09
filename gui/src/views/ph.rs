@@ -25,32 +25,24 @@ impl View {
 }
 
 impl super::View for View {
-    fn render(&mut self, ctx: &egui::Context) -> egui::Response {
-        egui::SidePanel::right("dzv_ph_side_panel")
-            .frame(egui::Frame::new().inner_margin(4).fill(Color32::from_gray(20)))
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().max_width(100.0).show(ui, |ui| {
-                    ui.with_layout(
-                        egui::Layout::top_down(egui::Align::LEFT).with_cross_justify(true),
-                        |ui| {
-                            ui.toggle_value(&mut self.windows.player.open, "Player");
-                            ui.toggle_value(&mut self.windows.actors.open, "Actors");
-                        },
-                    );
-                });
-            });
+    fn render_side_panel(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().max_width(100.0).show(ui, |ui| {
+            ui.with_layout(
+                egui::Layout::top_down(egui::Align::LEFT).with_cross_justify(true),
+                |ui| {
+                    ui.toggle_value(&mut self.windows.player.open, "Player");
+                    ui.toggle_value(&mut self.windows.actors.open, "Actors");
+                },
+            );
+        });
+    }
 
-        egui::CentralPanel::default()
-            .show(ctx, |ui| {
-                let state = self.client.state.lock().unwrap();
-                let mut requested_data = self.client.requested_data.lock().unwrap();
+    fn render_central_panel(&mut self, ctx: &egui::Context, _ui: &mut egui::Ui) {
+        let state = self.client.state.lock().unwrap();
+        let mut requested_data = self.client.requested_data.lock().unwrap();
 
-                self.windows.player.render(ctx, &state, &mut requested_data);
-                self.windows.actors.render(ctx, &state, &mut requested_data);
-
-                ui.response()
-            })
-            .response
+        self.windows.player.render(ctx, &state, &mut requested_data);
+        self.windows.actors.render(ctx, &state, &mut requested_data);
     }
 
     fn exit(&mut self) -> Result<()> {
