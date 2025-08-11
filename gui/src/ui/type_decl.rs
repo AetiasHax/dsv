@@ -3,6 +3,8 @@ use std::borrow::Cow;
 use eframe::egui;
 use type_crawler::Types;
 
+use crate::ui::columns;
+
 pub trait DataWidget {
     fn render_value(&mut self, ui: &mut egui::Ui, types: &Types);
 
@@ -164,7 +166,7 @@ where
             } else {
                 self.value.to_string()
             };
-            egui::TextEdit::singleline(&mut text).desired_width(100.0).show(ui);
+            egui::TextEdit::singleline(&mut text).desired_width(70.0).show(ui);
 
             if ui.selectable_label(show_hex, "0x").clicked() {
                 show_hex = !show_hex;
@@ -232,7 +234,7 @@ impl<'a> DataWidget for ArrayWidget<'a> {
 
                 ui.push_id(i, |ui| {
                     let mut widget = self.element_type.as_data_widget(ui, types, field_instance);
-                    ui.columns(3, |columns| {
+                    columns::columns(ui, &[1, 3, 2], |columns| {
                         render_value_badge(&mut columns[0], types, &self.element_type);
                         columns[1].label(format!("[{i}]"));
                         widget.render_value(&mut columns[2], types);
@@ -309,7 +311,7 @@ impl DataWidget for Fx32Widget {
                 let q20 = self.value as f32 / 4096.0;
                 format!("{:.5}", q20)
             };
-            egui::TextEdit::singleline(&mut text).desired_width(100.0).show(ui);
+            egui::TextEdit::singleline(&mut text).desired_width(70.0).show(ui);
 
             if ui.selectable_label(show_hex, "0x").clicked() {
                 show_hex = !show_hex;
@@ -426,7 +428,7 @@ impl<'a> DataWidget for StructWidget<'a> {
 
                 ui.push_id(offset, |ui| {
                     let mut widget = field.kind().as_data_widget(ui, types, field_instance);
-                    ui.columns(3, |columns| {
+                    columns::columns(ui, &[1, 3, 2], |columns| {
                         render_value_badge(&mut columns[0], types, field.kind());
                         columns[1].label(field.name().unwrap_or(""));
                         widget.render_value(&mut columns[2], types);
@@ -489,7 +491,7 @@ impl<'a> DataWidget for UnionWidget<'a> {
 
                 ui.push_id(i, |ui| {
                     let mut widget = field.kind().as_data_widget(ui, types, field_instance);
-                    ui.columns(3, |columns| {
+                    columns::columns(ui, &[1, 3, 2], |columns| {
                         render_value_badge(&mut columns[0], types, field.kind());
                         columns[1].label(field.name().unwrap_or(""));
                         widget.render_value(&mut columns[2], types);
