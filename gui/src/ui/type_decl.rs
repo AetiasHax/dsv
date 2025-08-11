@@ -356,30 +356,45 @@ impl AsDataWidget for type_crawler::Typedef {
     }
 }
 
-struct EnumWidget<'a> {
+struct EnumWidget {
     enum_decl: type_crawler::EnumDecl,
-    instance: TypeInstance<'a>,
+    value: i64,
 }
 
 impl AsDataWidget for type_crawler::EnumDecl {
-    fn as_data_widget<'a>(
+    fn as_data_widget(
         &self,
         _ui: &mut egui::Ui,
         _types: &Types,
-        instance: TypeInstance<'a>,
-    ) -> Box<dyn DataWidget + 'a> {
-        Box::new(EnumWidget { enum_decl: self.clone(), instance })
+        instance: TypeInstance,
+    ) -> Box<dyn DataWidget> {
+        let size = self.size();
+        let mut bytes = [0u8; 8];
+        bytes[0..size].copy_from_slice(instance.get(size));
+        let value = i64::from_le_bytes(bytes);
+        Box::new(EnumWidget { enum_decl: self.clone(), value })
     }
 }
 
-impl<'a> DataWidget for EnumWidget<'a> {
+impl DataWidget for EnumWidget {
     fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types) {
-        ui.label(egui::RichText::new("enum not implemented").color(egui::Color32::RED));
+        let current_constant = self.enum_decl.get(self.value);
+        let selected_text: Cow<str> = if let Some(constant) = current_constant {
+            constant.name().into()
+        } else {
+            format!("{:#x}", self.value).into()
+        };
+
+        egui::ComboBox::new("enum_value", "Select enum value")
+            .selected_text(selected_text)
+            .show_ui(ui, |ui| {
+                for constant in self.enum_decl.constants() {
+                    ui.selectable_value(&mut self.value, constant.value(), constant.name());
+                }
+            });
     }
 
-    fn render_compound(&self, ui: &mut egui::Ui, _types: &Types) {
-        ui.label(egui::RichText::new("enum compound not implemented").color(egui::Color32::RED));
-    }
+    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types) {}
 }
 
 struct StructWidget<'a> {
