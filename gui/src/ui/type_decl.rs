@@ -108,8 +108,12 @@ impl AsDataWidget for type_crawler::TypeKind {
                 let value = u32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
                 Box::new(IntegerWidget::new(ui, value))
             }
-            type_crawler::TypeKind::Struct(_) => Box::new(WipWidget { data_type: "struct" }),
-            type_crawler::TypeKind::Union(_) => Box::new(WipWidget { data_type: "union" }),
+            type_crawler::TypeKind::Struct(struct_decl) => {
+                struct_decl.as_data_widget(ui, types, instance)
+            }
+            type_crawler::TypeKind::Union(union_decl) => {
+                union_decl.as_data_widget(ui, types, instance)
+            }
             type_crawler::TypeKind::Named(name) => match name.as_str() {
                 "q20" => {
                     let value = i32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
@@ -443,26 +447,63 @@ impl<'a> DataWidget for StructWidget<'a> {
 struct UnionWidget<'a> {
     union_decl: type_crawler::UnionDecl,
     instance: TypeInstance<'a>,
+    open_id: egui::Id,
+}
+
+impl<'a> UnionWidget<'a> {
+    fn new(
+        ui: &mut egui::Ui,
+        union_decl: type_crawler::UnionDecl,
+        instance: TypeInstance<'a>,
+    ) -> Self {
+        let open_id = ui.make_persistent_id("union_open");
+        Self { union_decl, instance, open_id }
+    }
 }
 
 impl AsDataWidget for type_crawler::UnionDecl {
     fn as_data_widget<'a>(
         &self,
-        _ui: &mut egui::Ui,
+        ui: &mut egui::Ui,
         _types: &Types,
         instance: TypeInstance<'a>,
     ) -> Box<dyn DataWidget + 'a> {
-        Box::new(UnionWidget { union_decl: self.clone(), instance })
+        Box::new(UnionWidget::new(ui, self.clone(), instance))
     }
 }
 
 impl<'a> DataWidget for UnionWidget<'a> {
     fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types) {
-        ui.label(egui::RichText::new("union not implemented").color(egui::Color32::RED));
+        let mut open = self.is_open(ui);
+        if ui.selectable_label(open, "Open").clicked() {
+            open = !open;
+            ui.ctx().data_mut(|data| data.insert_temp(self.open_id, open));
+        }
     }
 
-    fn render_compound(&self, ui: &mut egui::Ui, _types: &Types) {
-        ui.label(egui::RichText::new("union compound not implemented").color(egui::Color32::RED));
+    fn render_compound(&self, ui: &mut egui::Ui, types: &Types) {
+        ui.indent("union_compound", |ui| {
+            for (i, field) in self.union_decl.fields().iter().enumerate() {
+                let size = field.kind().size(types);
+                let field_instance = self.instance.slice(0, size);
+
+                ui.push_id(i, |ui| {
+                    let mut widget = field.kind().as_data_widget(ui, types, field_instance);
+                    ui.columns(3, |columns| {
+                        render_value_badge(&mut columns[0], types, field.kind());
+                        columns[1].label(field.name().unwrap_or(""));
+                        widget.render_value(&mut columns[2], types);
+                    });
+                    if widget.is_open(ui) {
+                        widget.render_compound(ui, types);
+                    }
+                });
+            }
+        });
+    }
+
+    fn is_open(&self, ui: &mut egui::Ui) -> bool {
+        ui.ctx().data_mut(|data| data.get_temp::<bool>(self.open_id).unwrap_or(false))
     }
 }
 
