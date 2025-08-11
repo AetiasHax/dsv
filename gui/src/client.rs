@@ -5,16 +5,16 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use dzv_core::{gdb::client::GdbClient, state::State};
+use dzv_core::{
+    gdb::client::GdbClient,
+    state::{DataRequests, State},
+};
 
-pub struct Client<S>
-where
-    S: State,
-{
+pub struct Client {
     running: Arc<Mutex<bool>>,
     tx: Sender<Command>,
-    pub state: Arc<Mutex<S>>,
-    pub requested_data: Arc<Mutex<S::RequestedData>>,
+    pub state: Arc<Mutex<State>>,
+    pub data_requests: Arc<Mutex<DataRequests>>,
     update_thread: Option<JoinHandle<()>>,
 }
 
@@ -23,23 +23,19 @@ pub enum Command {
     Disconnect,
 }
 
-impl<S> Client<S>
-where
-    S: State + Send + 'static,
-    S::RequestedData: Send,
-{
+impl Client {
     const FRAME_TIME: Duration = Duration::from_nanos(16_666_667);
 
     pub fn new(mut gdb_client: GdbClient) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
 
         let running = Arc::new(Mutex::new(false));
-        let state = Arc::new(Mutex::new(S::new()));
-        let requested_data = Arc::new(Mutex::new(S::RequestedData::default()));
+        let state = Arc::new(Mutex::new(State::default()));
+        let data_requests = Arc::new(Mutex::new(DataRequests::new()));
         let update_thread = {
             let running = running.clone();
             let state = state.clone();
-            let requested_data = requested_data.clone();
+            let data_requests = data_requests.clone();
             std::thread::spawn(move || {
                 *running.lock().unwrap() = true;
 
@@ -64,8 +60,8 @@ where
                     });
                     {
                         let mut state = state.lock().unwrap();
-                        let requested_data = requested_data.lock().unwrap();
-                        state.update(&mut gdb_client, &requested_data).unwrap_or_else(|e| {
+                        let data_requests = data_requests.lock().unwrap();
+                        state.update(&mut gdb_client, &data_requests).unwrap_or_else(|e| {
                             log::error!("Failed to update player: {e}");
                         });
                     }
@@ -95,7 +91,7 @@ where
             })
         };
 
-        Client { running, tx, state, requested_data, update_thread: Some(update_thread) }
+        Client { running, tx, state, data_requests, update_thread: Some(update_thread) }
     }
 
     pub fn is_running(&self) -> bool {

@@ -2,6 +2,7 @@ mod app;
 mod client;
 mod config;
 mod tasks;
+mod ui;
 mod views;
 
 use eframe::egui;

@@ -68,17 +68,17 @@ impl eframe::App for DzvApp {
                         self.save_config();
                     }
                     if self.view.is_none() {
-                        if ui.button("Connect").clicked() {
-                            if let Err(e) = self.connect() {
-                                log::error!("Failed to connect: {e}");
-                            }
+                        if ui.button("Connect").clicked()
+                            && let Err(e) = self.connect()
+                        {
+                            log::error!("Failed to connect: {e}");
                         }
-                    } else if ui.button("Disconnect").clicked() {
-                        if let Some(view) = &mut self.view {
-                            match view.exit() {
-                                Ok(_) => self.view = None,
-                                Err(e) => log::error!("Failed to disconnect: {e}"),
-                            }
+                    } else if ui.button("Disconnect").clicked()
+                        && let Some(view) = &mut self.view
+                    {
+                        match view.exit() {
+                            Ok(_) => self.view = None,
+                            Err(e) => log::error!("Failed to disconnect: {e}"),
                         }
                     }
 
@@ -120,10 +120,10 @@ impl eframe::App for DzvApp {
                     } else {
                         ui.label("No type loading task running");
                     }
-                    if ui.button("Cancel").clicked() {
-                        if let Some(mut task) = self.load_types_task.take() {
-                            task.terminate();
-                        }
+                    if ui.button("Cancel").clicked()
+                        && let Some(mut task) = self.load_types_task.take()
+                    {
+                        task.terminate();
                     }
                 });
             });
@@ -132,13 +132,14 @@ impl eframe::App for DzvApp {
             .frame(egui::Frame::new().inner_margin(4).fill(Color32::from_gray(20)))
             .show(ctx, |ui| {
                 if let Some(view) = &mut self.view {
-                    view.render_side_panel(ctx, ui);
+                    view.render_side_panel(ctx, ui, &self.types.lock().unwrap());
                 }
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.project_modal_open {
-                egui::Window::new("Configure project").show(ctx, |ui| {
+                let mut open = self.project_modal_open;
+                egui::Window::new("Configure project").open(&mut open).show(ctx, |ui| {
                     if egui::TextEdit::singleline(&mut self.config.types.project_root)
                         .desired_width(200.0)
                         .hint_text("Project path")
@@ -249,10 +250,11 @@ impl eframe::App for DzvApp {
                         }
                     }
                 });
+                self.project_modal_open = open;
             }
 
             if let Some(view) = self.view.as_mut() {
-                view.render_central_panel(ctx, ui);
+                view.render_central_panel(ctx, ui, &self.types.lock().unwrap());
             }
         });
     }
