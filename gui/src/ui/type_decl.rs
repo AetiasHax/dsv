@@ -6,6 +6,8 @@ use type_crawler::Types;
 
 use crate::ui::columns;
 
+const COLUMN_WIDTHS: &[f32] = &[75.0, 150.0, 100.0];
+
 pub trait DataWidget {
     fn render_value(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State);
 
@@ -238,7 +240,7 @@ impl<'a> DataWidget for ArrayWidget<'a> {
 
                 ui.push_id(i, |ui| {
                     let mut widget = self.element_type.as_data_widget(ui, types, field_instance);
-                    columns::columns(ui, &[2, 3, 2], |columns| {
+                    columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
                         render_value_badge(&mut columns[0], types, &self.element_type);
                         columns[1].label(format!("[{i}]"));
                         widget.render_value(&mut columns[2], types, state);
@@ -272,7 +274,12 @@ impl PointerWidget {
 }
 
 impl DataWidget for PointerWidget {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
+    fn render_value(&mut self, ui: &mut egui::Ui, types: &Types, _state: &mut State) {
+        if self.pointee_type.size(types) == 0 {
+            let mut str = format!("{:#010x}", self.address);
+            egui::TextEdit::singleline(&mut str).desired_width(70.0).show(ui);
+            return;
+        }
         ui.horizontal(|ui| {
             let mut open = self.is_open(ui);
             if ui.selectable_label(open, "Open").clicked() {
@@ -292,6 +299,9 @@ impl DataWidget for PointerWidget {
         let list_length =
             ui.ctx().data_mut(|data| data.get_temp::<usize>(self.list_length_id).unwrap_or(1));
         let stride = self.pointee_type.stride(types);
+        if stride == 0 {
+            return;
+        }
         let element_size = self.pointee_type.size(types);
         let size = stride * list_length;
         state.request(self.address, size);
@@ -301,20 +311,18 @@ impl DataWidget for PointerWidget {
         };
         let instance = TypeInstance::new(&data);
 
+        if list_length == 1 {
+            self.pointee_type.as_data_widget(ui, types, instance).render_compound(ui, types, state);
+            return;
+        }
         ui.indent("pointer_compound", |ui| {
-            if list_length == 1 {
-                self.pointee_type
-                    .as_data_widget(ui, types, instance)
-                    .render_compound(ui, types, state);
-                return;
-            }
             for i in 0..list_length {
                 ui.push_id(i, |ui| {
                     let offset = i * stride;
                     let field_instance = instance.slice(offset, element_size);
 
                     let mut widget = self.pointee_type.as_data_widget(ui, types, field_instance);
-                    columns::columns(ui, &[2, 3, 2], |columns| {
+                    columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
                         render_value_badge(&mut columns[0], types, &self.pointee_type);
                         columns[1].label(format!("[{i}]"));
                         widget.render_value(&mut columns[2], types, state);
@@ -523,7 +531,7 @@ impl<'a> DataWidget for StructWidget<'a> {
 
                 ui.push_id(offset, |ui| {
                     let mut widget = field.kind().as_data_widget(ui, types, field_instance);
-                    columns::columns(ui, &[2, 3, 2], |columns| {
+                    columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
                         render_value_badge(&mut columns[0], types, field.kind());
                         columns[1].label(field.name().unwrap_or(""));
                         widget.render_value(&mut columns[2], types, state);
@@ -586,7 +594,7 @@ impl<'a> DataWidget for UnionWidget<'a> {
 
                 ui.push_id(i, |ui| {
                     let mut widget = field.kind().as_data_widget(ui, types, field_instance);
-                    columns::columns(ui, &[2, 3, 2], |columns| {
+                    columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
                         render_value_badge(&mut columns[0], types, field.kind());
                         columns[1].label(field.name().unwrap_or(""));
                         widget.render_value(&mut columns[2], types, state);
@@ -604,72 +612,194 @@ impl<'a> DataWidget for UnionWidget<'a> {
     }
 }
 
-fn render_value_badge(
-    ui: &mut egui::Ui,
-    types: &Types,
-    kind: &type_crawler::TypeKind,
-) -> egui::Response {
-    let (text, background, color) = value_badge_style(types, kind);
-    ui.label(
+fn render_value_badge(ui: &mut egui::Ui, types: &Types, kind: &type_crawler::TypeKind) {
+    let BadgeStyle { text, tooltip, background, color } = value_badge_style(types, kind);
+    let label = ui.label(
         egui::RichText::new(text)
             .background_color(egui::Color32::from_hex(background).unwrap())
             .color(egui::Color32::from_hex(color).unwrap()),
-    )
+    );
+    if label.hovered()
+        && let Some(tooltip) = tooltip
+    {
+        egui::Tooltip::for_widget(&label).at_pointer().gap(12.0).show(|ui| {
+            ui.label(tooltip);
+        });
+    }
 }
 
-fn value_badge_style<'a>(
-    types: &'a Types,
-    kind: &'a type_crawler::TypeKind,
-) -> (Cow<'a, str>, &'a str, &'a str) {
+struct BadgeStyle<'a> {
+    text: Cow<'a, str>,
+    tooltip: Option<String>,
+    background: &'static str,
+    color: &'static str,
+}
+
+fn value_badge_style<'a>(types: &'a Types, kind: &'a type_crawler::TypeKind) -> BadgeStyle<'a> {
     match kind {
-        type_crawler::TypeKind::USize { .. } => ("usize".into(), "#224eff", "#ffffff"),
-        type_crawler::TypeKind::SSize { .. } => ("ssize".into(), "#ff4e22", "#ffffff"),
-        type_crawler::TypeKind::U64 => ("u64".into(), "#0033ff", "#ffffff"),
-        type_crawler::TypeKind::U32 => ("u32".into(), "#466bff", "#ffffff"),
-        type_crawler::TypeKind::U16 => ("u16".into(), "#7691ff", "#ffffff"),
-        type_crawler::TypeKind::U8 => ("u8".into(), "#a9baff", "#000000"),
-        type_crawler::TypeKind::S64 => ("s64".into(), "#ff3300", "#ffffff"),
-        type_crawler::TypeKind::S32 => ("s32".into(), "#ff6b46", "#000000"),
-        type_crawler::TypeKind::S16 => ("s16".into(), "#ff9176", "#000000"),
-        type_crawler::TypeKind::S8 => ("s8".into(), "#ffbaa9", "#000000"),
-        type_crawler::TypeKind::Bool => ("bool".into(), "#008d00", "#ffffff"),
-        type_crawler::TypeKind::Void => ("void".into(), "#242424", "#ffffff"),
+        type_crawler::TypeKind::USize { .. } => BadgeStyle {
+            text: "usize".into(),
+            tooltip: None,
+            background: "#224eff",
+            color: "#ffffff",
+        },
+        type_crawler::TypeKind::SSize { .. } => BadgeStyle {
+            text: "ssize".into(),
+            tooltip: None,
+            background: "#ff4e22",
+            color: "#ffffff",
+        },
+        type_crawler::TypeKind::U64 => BadgeStyle {
+            text: "u64".into(),
+            tooltip: None,
+            background: "#0033ff",
+            color: "#ffffff",
+        },
+        type_crawler::TypeKind::U32 => BadgeStyle {
+            text: "u32".into(),
+            tooltip: None,
+            background: "#466bff",
+            color: "#ffffff",
+        },
+        type_crawler::TypeKind::U16 => BadgeStyle {
+            text: "u16".into(),
+            tooltip: None,
+            background: "#7691ff",
+            color: "#ffffff",
+        },
+        type_crawler::TypeKind::U8 => BadgeStyle {
+            text: "u8".into(),
+            tooltip: None,
+            background: "#a9baff",
+            color: "#000000",
+        },
+        type_crawler::TypeKind::S64 => BadgeStyle {
+            text: "s64".into(),
+            tooltip: None,
+            background: "#ff3300",
+            color: "#ffffff",
+        },
+        type_crawler::TypeKind::S32 => BadgeStyle {
+            text: "s32".into(),
+            tooltip: None,
+            background: "#ff6b46",
+            color: "#000000",
+        },
+        type_crawler::TypeKind::S16 => BadgeStyle {
+            text: "s16".into(),
+            tooltip: None,
+            background: "#ff9176",
+            color: "#000000",
+        },
+        type_crawler::TypeKind::S8 => BadgeStyle {
+            text: "s8".into(),
+            tooltip: None,
+            background: "#ffbaa9",
+            color: "#000000",
+        },
+        type_crawler::TypeKind::Bool => BadgeStyle {
+            text: "bool".into(),
+            tooltip: None,
+            background: "#008d00",
+            color: "#ffffff",
+        },
+        type_crawler::TypeKind::Void => BadgeStyle {
+            text: "void".into(),
+            tooltip: None,
+            background: "#242424",
+            color: "#ffffff",
+        },
         type_crawler::TypeKind::Pointer { pointee_type, .. } => {
-            let (text, background, color) = value_badge_style(types, pointee_type);
-            (format!("{text}*").into(), background, color)
+            let BadgeStyle { text, tooltip, background, color } =
+                value_badge_style(types, pointee_type);
+            let text = tooltip.as_deref().unwrap_or(&text);
+            let (new_text, tooltip) = if text.len() <= 10 {
+                (format!("{text}*").into(), None)
+            } else {
+                ("pointer".into(), Some(format!("{text}*")))
+            };
+            BadgeStyle { text: new_text, tooltip, background, color }
         }
         type_crawler::TypeKind::Array { element_type, .. } => {
-            let (text, background, color) = value_badge_style(types, element_type);
-            (format!("{text}[]").into(), background, color)
+            let BadgeStyle { text, tooltip, background, color } =
+                value_badge_style(types, element_type);
+            let text = tooltip.as_deref().unwrap_or(&text);
+            let (new_text, tooltip) = if text.len() <= 10 {
+                (format!("{text}[]").into(), None)
+            } else {
+                ("array".into(), Some(format!("{text}[]")))
+            };
+            BadgeStyle { text: new_text, tooltip, background, color }
         }
-        type_crawler::TypeKind::Function { .. } => ("fn".into(), "#35620bff", "#ffffff"),
-        type_crawler::TypeKind::Struct(struct_decl) => {
-            (struct_decl.name().unwrap_or("struct").into(), "#af1cc9", "#ffffff")
-        }
-        type_crawler::TypeKind::Union(union_decl) => {
-            (union_decl.name().unwrap_or("union").into(), "#c9bb1c", "#000000")
-        }
+        type_crawler::TypeKind::Function { .. } => BadgeStyle {
+            text: "fn".into(),
+            tooltip: None,
+            background: "#35620bff",
+            color: "#ffffff",
+        },
+        type_crawler::TypeKind::Struct(struct_decl) => struct_badge_style(struct_decl),
+        type_crawler::TypeKind::Union(union_decl) => union_badge_style(union_decl),
         type_crawler::TypeKind::Named(name) => match name.as_str() {
-            "q20" => ("q20".into(), "#006abb", "#ffffff"),
+            "q20" => BadgeStyle {
+                text: "q20".into(),
+                tooltip: None,
+                background: "#006abb",
+                color: "#ffffff",
+            },
             _ => {
                 let Some(type_decl) = types.get(name) else {
-                    return ("unknown".into(), "#000000ff", "#ffffff");
+                    return BadgeStyle {
+                        text: "unknown".into(),
+                        tooltip: None,
+                        background: "#000000ff",
+                        color: "#ffffff",
+                    };
                 };
                 match type_decl {
                     type_crawler::TypeDecl::Typedef(typedef) => {
                         value_badge_style(types, typedef.underlying_type())
                     }
-                    type_crawler::TypeDecl::Enum(enum_decl) => {
-                        (enum_decl.name().unwrap_or("enum").into(), "#ff8c00", "#ffffff")
-                    }
-                    type_crawler::TypeDecl::Struct(struct_decl) => {
-                        (struct_decl.name().unwrap_or("struct").into(), "#af1cc9", "#ffffff")
-                    }
-                    type_crawler::TypeDecl::Union(union_decl) => {
-                        (union_decl.name().unwrap_or("union").into(), "#c9bb1c", "#000000")
-                    }
+                    type_crawler::TypeDecl::Enum(enum_decl) => enum_badge_style(enum_decl),
+                    type_crawler::TypeDecl::Struct(struct_decl) => struct_badge_style(struct_decl),
+                    type_crawler::TypeDecl::Union(union_decl) => union_badge_style(union_decl),
                 }
             }
         },
     }
+}
+
+fn struct_badge_style(struct_decl: &'_ type_crawler::StructDecl) -> BadgeStyle<'_> {
+    let full_name = struct_decl.name();
+    let (text, tooltip) = if let Some(name) = full_name
+        && name.len() <= 10
+    {
+        (name.into(), None)
+    } else {
+        ("struct".into(), full_name.map(|n| n.to_string()))
+    };
+    BadgeStyle { text, tooltip, background: "#af1cc9", color: "#ffffff" }
+}
+
+fn union_badge_style(union_decl: &'_ type_crawler::UnionDecl) -> BadgeStyle<'_> {
+    let full_name = union_decl.name();
+    let (text, tooltip) = if let Some(name) = full_name
+        && name.len() <= 10
+    {
+        (name.into(), None)
+    } else {
+        ("union".into(), full_name.map(|n| n.to_string()))
+    };
+    BadgeStyle { text, tooltip, background: "#c9bb1c", color: "#000000" }
+}
+
+fn enum_badge_style(enum_decl: &'_ type_crawler::EnumDecl) -> BadgeStyle<'_> {
+    let full_name = enum_decl.name();
+    let (text, tooltip) = if let Some(name) = full_name
+        && name.len() <= 10
+    {
+        (name.into(), None)
+    } else {
+        ("enum".into(), full_name.map(|n| n.to_string()))
+    };
+    BadgeStyle { text, tooltip, background: "#ff8c00", color: "#ffffff" }
 }
