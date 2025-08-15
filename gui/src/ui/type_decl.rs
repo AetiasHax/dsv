@@ -4,7 +4,7 @@ use dzv_core::state::State;
 use eframe::egui::{self, Widget};
 use type_crawler::Types;
 
-use crate::ui::columns;
+use crate::{ui::columns, util::read::TypeInstance};
 
 const COLUMN_WIDTHS: &[f32] = &[75.0, 150.0, 100.0];
 
@@ -25,29 +25,6 @@ pub trait AsDataWidget {
         types: &Types,
         instance: TypeInstance<'a>,
     ) -> Box<dyn DataWidget + 'a>;
-}
-
-#[derive(Clone, Copy)]
-pub struct TypeInstance<'a> {
-    address: u32,
-    data: &'a [u8],
-}
-
-impl<'a> TypeInstance<'a> {
-    pub fn new(address: u32, data: &'a [u8]) -> Self {
-        Self { address, data }
-    }
-
-    fn slice(&self, offset: usize, size: usize) -> Self {
-        let start = offset.min(self.data.len());
-        let end = (offset + size).min(self.data.len());
-        Self::new(self.address + offset as u32, &self.data[start..end])
-    }
-
-    fn get(&self, size: usize) -> &[u8] {
-        let end = size.min(self.data.len());
-        &self.data[..end]
-    }
 }
 
 impl AsDataWidget for type_crawler::TypeKind {
@@ -111,7 +88,7 @@ impl AsDataWidget for type_crawler::TypeKind {
                 Box::new(ArrayWidget::new(ui, *element_type.clone(), *size, instance))
             }
             type_crawler::TypeKind::Array { element_type, size: None } => {
-                Box::new(PointerWidget::new(ui, *element_type.clone(), instance.address))
+                Box::new(PointerWidget::new(ui, *element_type.clone(), instance.address()))
             }
             type_crawler::TypeKind::Function { .. } => {
                 let value = u32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));

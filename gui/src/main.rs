@@ -3,6 +3,7 @@ mod client;
 mod config;
 mod tasks;
 mod ui;
+mod util;
 mod views;
 
 use eframe::egui;

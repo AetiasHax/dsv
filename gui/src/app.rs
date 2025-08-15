@@ -132,7 +132,10 @@ impl eframe::App for DzvApp {
             .frame(egui::Frame::new().inner_margin(4).fill(Color32::from_gray(20)))
             .show(ctx, |ui| {
                 if let Some(view) = &mut self.view {
-                    view.render_side_panel(ctx, ui, &self.types.lock().unwrap());
+                    view.render_side_panel(ctx, ui, &self.types.lock().unwrap(), &mut self.config)
+                        .unwrap_or_else(|e| {
+                            log::error!("Failed to render side panel: {e}");
+                        });
                 }
             });
 
@@ -254,7 +257,10 @@ impl eframe::App for DzvApp {
             }
 
             if let Some(view) = self.view.as_mut() {
-                view.render_central_panel(ctx, ui, &self.types.lock().unwrap());
+                view.render_central_panel(ctx, ui, &self.types.lock().unwrap(), &mut self.config)
+                    .unwrap_or_else(|e| {
+                        log::error!("Failed to render central panel: {e}");
+                    });
             }
         });
     }

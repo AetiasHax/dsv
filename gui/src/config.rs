@@ -2,11 +2,14 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use toml::Table;
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
     pub gdb: GdbConfig,
     pub types: TypesConfig,
+    #[serde(default)]
+    pub games: Table,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -30,6 +33,7 @@ impl Config {
                 include_paths: Vec::new(),
                 ignore_paths: Vec::new(),
             },
+            games: Table::new(),
         }
     }
 
