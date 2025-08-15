@@ -1,14 +1,15 @@
 use std::borrow::Cow;
 
-use eframe::egui;
+use dzv_core::state::State;
+use eframe::egui::{self, Widget};
 use type_crawler::Types;
 
 use crate::ui::columns;
 
 pub trait DataWidget {
-    fn render_value(&mut self, ui: &mut egui::Ui, types: &Types);
+    fn render_value(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State);
 
-    fn render_compound(&self, ui: &mut egui::Ui, types: &Types);
+    fn render_compound(&self, ui: &mut egui::Ui, types: &Types, state: &mut State);
 
     fn is_open(&self, _ui: &mut egui::Ui) -> bool {
         false
@@ -99,7 +100,10 @@ impl AsDataWidget for type_crawler::TypeKind {
                 Box::new(BoolWidget { value })
             }
             type_crawler::TypeKind::Void => Box::new(VoidWidget),
-            type_crawler::TypeKind::Pointer { .. } => Box::new(WipWidget { data_type: "pointer" }),
+            type_crawler::TypeKind::Pointer { pointee_type, .. } => {
+                let address = u32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
+                Box::new(PointerWidget::new(ui, *pointee_type.clone(), address))
+            }
             type_crawler::TypeKind::Array { element_type, size: Some(size) } => {
                 Box::new(ArrayWidget::new(ui, *element_type.clone(), *size, instance))
             }
@@ -136,9 +140,9 @@ impl AsDataWidget for type_crawler::TypeKind {
 struct VoidWidget;
 
 impl DataWidget for VoidWidget {
-    fn render_value(&mut self, _ui: &mut egui::Ui, _types: &Types) {}
+    fn render_value(&mut self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
 
-    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types) {}
+    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
 }
 
 struct IntegerWidget<T> {
@@ -157,7 +161,7 @@ impl<T> DataWidget for IntegerWidget<T>
 where
     T: std::fmt::LowerHex + std::fmt::Display + Copy,
 {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types) {
+    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
         ui.horizontal(|ui| {
             let mut show_hex =
                 ui.ctx().data_mut(|data| data.get_temp::<bool>(self.show_hex_id).unwrap_or(false));
@@ -175,7 +179,7 @@ where
         });
     }
 
-    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types) {}
+    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
 }
 
 struct BoolWidget {
@@ -183,7 +187,7 @@ struct BoolWidget {
 }
 
 impl DataWidget for BoolWidget {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types) {
+    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
         let mut checked = self.value != 0;
         let text: Cow<str> = if self.value > 1 {
             format!("(0x{:02x})", self.value).into()
@@ -193,7 +197,7 @@ impl DataWidget for BoolWidget {
         ui.checkbox(&mut checked, text);
     }
 
-    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types) {}
+    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
 }
 
 struct ArrayWidget<'a> {
@@ -216,7 +220,7 @@ impl<'a> ArrayWidget<'a> {
 }
 
 impl<'a> DataWidget for ArrayWidget<'a> {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types) {
+    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
         let mut open = self.is_open(ui);
         if ui.selectable_label(open, "Open").clicked() {
             open = !open;
@@ -224,7 +228,7 @@ impl<'a> DataWidget for ArrayWidget<'a> {
         }
     }
 
-    fn render_compound(&self, ui: &mut egui::Ui, types: &Types) {
+    fn render_compound(&self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         ui.indent("array_compound", |ui| {
             let element_size = self.element_type.size(types);
             let stride = self.element_type.stride(types);
@@ -234,13 +238,89 @@ impl<'a> DataWidget for ArrayWidget<'a> {
 
                 ui.push_id(i, |ui| {
                     let mut widget = self.element_type.as_data_widget(ui, types, field_instance);
-                    columns::columns(ui, &[1, 3, 2], |columns| {
+                    columns::columns(ui, &[2, 3, 2], |columns| {
                         render_value_badge(&mut columns[0], types, &self.element_type);
                         columns[1].label(format!("[{i}]"));
-                        widget.render_value(&mut columns[2], types);
+                        widget.render_value(&mut columns[2], types, state);
                     });
                     if widget.is_open(ui) {
-                        widget.render_compound(ui, types);
+                        widget.render_compound(ui, types, state);
+                    }
+                });
+            }
+        });
+    }
+
+    fn is_open(&self, ui: &mut egui::Ui) -> bool {
+        ui.ctx().data_mut(|data| data.get_temp::<bool>(self.open_id).unwrap_or(false))
+    }
+}
+
+struct PointerWidget {
+    pointee_type: type_crawler::TypeKind,
+    address: u32,
+    list_length_id: egui::Id,
+    open_id: egui::Id,
+}
+
+impl PointerWidget {
+    fn new(ui: &mut egui::Ui, pointee_type: type_crawler::TypeKind, address: u32) -> Self {
+        let list_length_id = ui.make_persistent_id("pointer_list_length");
+        let open_id = ui.make_persistent_id("pointer_open");
+        Self { pointee_type, address, list_length_id, open_id }
+    }
+}
+
+impl DataWidget for PointerWidget {
+    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
+        ui.horizontal(|ui| {
+            let mut open = self.is_open(ui);
+            if ui.selectable_label(open, "Open").clicked() {
+                open = !open;
+                ui.ctx().data_mut(|data| data.insert_temp(self.open_id, open));
+            }
+
+            let mut list_length =
+                ui.ctx().data_mut(|data| data.get_temp::<usize>(self.list_length_id).unwrap_or(1));
+            if egui::DragValue::new(&mut list_length).ui(ui).changed() {
+                ui.ctx().data_mut(|data| data.insert_temp(self.list_length_id, list_length));
+            }
+        });
+    }
+
+    fn render_compound(&self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
+        let list_length =
+            ui.ctx().data_mut(|data| data.get_temp::<usize>(self.list_length_id).unwrap_or(1));
+        let stride = self.pointee_type.stride(types);
+        let element_size = self.pointee_type.size(types);
+        let size = stride * list_length;
+        state.request(self.address, size);
+        let Some(data) = state.get_data(self.address).map(|d| d.to_vec()) else {
+            ui.label("Pointer data not found");
+            return;
+        };
+        let instance = TypeInstance::new(&data);
+
+        ui.indent("pointer_compound", |ui| {
+            if list_length == 1 {
+                self.pointee_type
+                    .as_data_widget(ui, types, instance)
+                    .render_compound(ui, types, state);
+                return;
+            }
+            for i in 0..list_length {
+                ui.push_id(i, |ui| {
+                    let offset = i * stride;
+                    let field_instance = instance.slice(offset, element_size);
+
+                    let mut widget = self.pointee_type.as_data_widget(ui, types, field_instance);
+                    columns::columns(ui, &[2, 3, 2], |columns| {
+                        render_value_badge(&mut columns[0], types, &self.pointee_type);
+                        columns[1].label(format!("[{i}]"));
+                        widget.render_value(&mut columns[2], types, state);
+                    });
+                    if widget.is_open(ui) {
+                        widget.render_compound(ui, types, state);
                     }
                 });
             }
@@ -257,14 +337,14 @@ struct WipWidget {
 }
 
 impl DataWidget for WipWidget {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types) {
+    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
         ui.label(
             egui::RichText::new(format!("{} value not implemented", self.data_type))
                 .color(egui::Color32::RED),
         );
     }
 
-    fn render_compound(&self, ui: &mut egui::Ui, _types: &Types) {
+    fn render_compound(&self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
         ui.label(
             egui::RichText::new(format!("{} compound not implemented", self.data_type))
                 .color(egui::Color32::RED),
@@ -277,14 +357,14 @@ struct NotFoundWidget {
 }
 
 impl DataWidget for NotFoundWidget {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types) {
+    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
         ui.label(
             egui::RichText::new(format!("Type '{}' not found", self.name))
                 .color(egui::Color32::RED),
         );
     }
 
-    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types) {}
+    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
 }
 
 struct Fx32Widget {
@@ -300,7 +380,7 @@ impl Fx32Widget {
 }
 
 impl DataWidget for Fx32Widget {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types) {
+    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
         ui.horizontal(|ui| {
             let mut show_hex =
                 ui.ctx().data_mut(|data| data.get_temp::<bool>(self.show_hex_id).unwrap_or(false));
@@ -320,7 +400,7 @@ impl DataWidget for Fx32Widget {
         });
     }
 
-    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types) {}
+    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
 }
 
 impl AsDataWidget for type_crawler::TypeDecl {
@@ -377,7 +457,7 @@ impl AsDataWidget for type_crawler::EnumDecl {
 }
 
 impl DataWidget for EnumWidget {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types) {
+    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
         let current_constant = self.enum_decl.get(self.value);
         let selected_text: Cow<str> = if let Some(constant) = current_constant {
             constant.name().into()
@@ -394,7 +474,7 @@ impl DataWidget for EnumWidget {
             });
     }
 
-    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types) {}
+    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
 }
 
 struct StructWidget<'a> {
@@ -426,7 +506,7 @@ impl AsDataWidget for type_crawler::StructDecl {
 }
 
 impl<'a> DataWidget for StructWidget<'a> {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types) {
+    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
         let mut open = self.is_open(ui);
         if ui.selectable_label(open, "Open").clicked() {
             open = !open;
@@ -434,7 +514,7 @@ impl<'a> DataWidget for StructWidget<'a> {
         }
     }
 
-    fn render_compound(&self, ui: &mut egui::Ui, types: &Types) {
+    fn render_compound(&self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         ui.indent("struct_compound", |ui| {
             for field in self.struct_decl.fields() {
                 let offset = field.offset_bytes();
@@ -443,13 +523,13 @@ impl<'a> DataWidget for StructWidget<'a> {
 
                 ui.push_id(offset, |ui| {
                     let mut widget = field.kind().as_data_widget(ui, types, field_instance);
-                    columns::columns(ui, &[1, 3, 2], |columns| {
+                    columns::columns(ui, &[2, 3, 2], |columns| {
                         render_value_badge(&mut columns[0], types, field.kind());
                         columns[1].label(field.name().unwrap_or(""));
-                        widget.render_value(&mut columns[2], types);
+                        widget.render_value(&mut columns[2], types, state);
                     });
                     if widget.is_open(ui) {
-                        widget.render_compound(ui, types);
+                        widget.render_compound(ui, types, state);
                     }
                 });
             }
@@ -490,7 +570,7 @@ impl AsDataWidget for type_crawler::UnionDecl {
 }
 
 impl<'a> DataWidget for UnionWidget<'a> {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types) {
+    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
         let mut open = self.is_open(ui);
         if ui.selectable_label(open, "Open").clicked() {
             open = !open;
@@ -498,7 +578,7 @@ impl<'a> DataWidget for UnionWidget<'a> {
         }
     }
 
-    fn render_compound(&self, ui: &mut egui::Ui, types: &Types) {
+    fn render_compound(&self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         ui.indent("union_compound", |ui| {
             for (i, field) in self.union_decl.fields().iter().enumerate() {
                 let size = field.kind().size(types);
@@ -506,13 +586,13 @@ impl<'a> DataWidget for UnionWidget<'a> {
 
                 ui.push_id(i, |ui| {
                     let mut widget = field.kind().as_data_widget(ui, types, field_instance);
-                    columns::columns(ui, &[1, 3, 2], |columns| {
+                    columns::columns(ui, &[2, 3, 2], |columns| {
                         render_value_badge(&mut columns[0], types, field.kind());
                         columns[1].label(field.name().unwrap_or(""));
-                        widget.render_value(&mut columns[2], types);
+                        widget.render_value(&mut columns[2], types, state);
                     });
                     if widget.is_open(ui) {
-                        widget.render_compound(ui, types);
+                        widget.render_compound(ui, types, state);
                     }
                 });
             }
@@ -579,9 +659,15 @@ fn value_badge_style<'a>(
                     type_crawler::TypeDecl::Typedef(typedef) => {
                         value_badge_style(types, typedef.underlying_type())
                     }
-                    type_crawler::TypeDecl::Enum(_) => ("enum".into(), "#ff8c00", "#ffffff"),
-                    type_crawler::TypeDecl::Struct(_) => ("struct".into(), "#af1cc9", "#ffffff"),
-                    type_crawler::TypeDecl::Union(_) => ("union".into(), "#c9bb1c", "#000000"),
+                    type_crawler::TypeDecl::Enum(enum_decl) => {
+                        (enum_decl.name().unwrap_or("enum").into(), "#ff8c00", "#ffffff")
+                    }
+                    type_crawler::TypeDecl::Struct(struct_decl) => {
+                        (struct_decl.name().unwrap_or("struct").into(), "#af1cc9", "#ffffff")
+                    }
+                    type_crawler::TypeDecl::Union(union_decl) => {
+                        (union_decl.name().unwrap_or("union").into(), "#c9bb1c", "#000000")
+                    }
                 }
             }
         },

@@ -5,16 +5,12 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use dzv_core::{
-    gdb::client::GdbClient,
-    state::{DataRequests, State},
-};
+use dzv_core::{gdb::client::GdbClient, state::State};
 
 pub struct Client {
     running: Arc<Mutex<bool>>,
     tx: Sender<Command>,
     pub state: Arc<Mutex<State>>,
-    pub data_requests: Arc<Mutex<DataRequests>>,
     update_thread: Option<JoinHandle<()>>,
 }
 
@@ -31,11 +27,9 @@ impl Client {
 
         let running = Arc::new(Mutex::new(false));
         let state = Arc::new(Mutex::new(State::default()));
-        let data_requests = Arc::new(Mutex::new(DataRequests::new()));
         let update_thread = {
             let running = running.clone();
             let state = state.clone();
-            let data_requests = data_requests.clone();
             std::thread::spawn(move || {
                 *running.lock().unwrap() = true;
 
@@ -60,8 +54,7 @@ impl Client {
                     });
                     {
                         let mut state = state.lock().unwrap();
-                        let data_requests = data_requests.lock().unwrap();
-                        state.update(&mut gdb_client, &data_requests).unwrap_or_else(|e| {
+                        state.update(&mut gdb_client).unwrap_or_else(|e| {
                             log::error!("Failed to update player: {e}");
                         });
                     }
@@ -91,7 +84,7 @@ impl Client {
             })
         };
 
-        Client { running, tx, state, data_requests, update_thread: Some(update_thread) }
+        Client { running, tx, state, update_thread: Some(update_thread) }
     }
 
     pub fn is_running(&self) -> bool {

@@ -1,8 +1,5 @@
 use anyhow::{Ok, Result};
-use dzv_core::{
-    gdb::client::GdbClient,
-    state::{DataRequests, State},
-};
+use dzv_core::{gdb::client::GdbClient, state::State};
 use eframe::egui::{self};
 
 use crate::{
@@ -51,11 +48,10 @@ impl super::View for View {
         _ui: &mut egui::Ui,
         types: &type_crawler::Types,
     ) {
-        let state = self.client.state.lock().unwrap();
-        let mut requested_data = self.client.data_requests.lock().unwrap();
+        let mut state = self.client.state.lock().unwrap();
 
-        self.windows.player.render(ctx, types, &state, &mut requested_data);
-        self.windows.actors.render(ctx, types, &state, &mut requested_data);
+        self.windows.player.render(ctx, types, &mut state);
+        self.windows.actors.render(ctx, types, &mut state);
     }
 
     fn exit(&mut self) -> Result<()> {
@@ -66,13 +62,7 @@ impl super::View for View {
 }
 
 trait Window {
-    fn render(
-        &mut self,
-        ctx: &egui::Context,
-        types: &type_crawler::Types,
-        state: &State,
-        data_requests: &mut DataRequests,
-    );
+    fn render(&mut self, ctx: &egui::Context, types: &type_crawler::Types, state: &mut State);
 }
 
 #[derive(Default)]
@@ -81,13 +71,7 @@ struct PlayerWindow {
 }
 
 impl Window for PlayerWindow {
-    fn render(
-        &mut self,
-        ctx: &egui::Context,
-        types: &type_crawler::Types,
-        state: &State,
-        data_requests: &mut DataRequests,
-    ) {
+    fn render(&mut self, ctx: &egui::Context, types: &type_crawler::Types, state: &mut State) {
         let mut open = self.open;
         egui::Window::new("Player").open(&mut open).resizable(false).show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -96,12 +80,15 @@ impl Window for PlayerWindow {
                     return;
                 };
 
-                data_requests.request(0x027e0f94, vec3p_type.size(types));
+                state.request(0x027e0f94, vec3p_type.size(types));
 
-                let player_data = state.get_data(0x027e0f94).unwrap_or(&[]);
+                let Some(player_data) = state.get_data(0x027e0f94).map(|d| d.to_vec()) else {
+                    ui.label("Player data not found");
+                    return;
+                };
 
-                let instance = TypeInstance::new(player_data);
-                vec3p_type.as_data_widget(ui, types, instance).render_compound(ui, types);
+                let instance = TypeInstance::new(&player_data);
+                vec3p_type.as_data_widget(ui, types, instance).render_compound(ui, types, state);
             });
         });
         self.open = open;
@@ -114,17 +101,11 @@ struct ActorsWindow {
 }
 
 impl Window for ActorsWindow {
-    fn render(
-        &mut self,
-        ctx: &egui::Context,
-        types: &type_crawler::Types,
-        state: &State,
-        data_requests: &mut DataRequests,
-    ) {
+    fn render(&mut self, ctx: &egui::Context, types: &type_crawler::Types, state: &mut State) {
         let mut open = self.open;
         egui::Window::new("Actors").open(&mut open).resizable(true).show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                data_requests.request(0x027e0fe4, 0x4);
+                state.request(0x027e0fe4, 0x4);
                 let actor_manager_data = state.get_data(0x027e0fe4).unwrap_or(&[0; 0x4]);
                 let actor_manager_ptr =
                     u32::from_le_bytes(actor_manager_data.try_into().unwrap_or([0; 4]));
@@ -137,14 +118,18 @@ impl Window for ActorsWindow {
                     ui.label("ActorManager struct not found");
                     return;
                 };
-                data_requests.request(actor_manager_ptr, actor_manager_type.size(types));
-                let Some(actor_manager_data) = state.get_data(actor_manager_ptr) else {
+                state.request(actor_manager_ptr, actor_manager_type.size(types));
+                let Some(actor_manager_data) =
+                    state.get_data(actor_manager_ptr).map(|d| d.to_vec())
+                else {
                     ui.label("ActorManager data not found");
                     return;
                 };
 
-                let instance = TypeInstance::new(actor_manager_data);
-                actor_manager_type.as_data_widget(ui, types, instance).render_compound(ui, types);
+                let instance = TypeInstance::new(&actor_manager_data);
+                actor_manager_type
+                    .as_data_widget(ui, types, instance)
+                    .render_compound(ui, types, state);
             });
         });
         self.open = open;
