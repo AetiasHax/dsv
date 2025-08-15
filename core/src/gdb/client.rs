@@ -33,23 +33,7 @@ impl GdbClient {
         Ok(())
     }
 
-    pub fn read_bytes(&mut self, address: u32, length: usize) -> Result<Vec<u8>> {
-        let packet = format!("m {address:x},{length:x}");
-        self.stream.send_packet(&packet)?;
-        self.stream.receive_ack()?;
-        let response = self.stream.receive_packet()?;
-        self.stream.send_ack()?;
-        self.handle_error(&response)?;
-        let mut data = Vec::with_capacity(length);
-        for chunk in response.as_bytes().chunks(2) {
-            let high = hex_char_to_byte(chunk[0] as char);
-            let low = hex_char_to_byte(chunk[1] as char);
-            data.push((high << 4) | low);
-        }
-        Ok(data)
-    }
-
-    pub fn read_slice(&mut self, address: u32, buf: &mut [u8]) -> Result<()> {
+    fn read_slice_part(&mut self, address: u32, buf: &mut [u8]) -> Result<()> {
         let packet = format!("m {address:x},{:x}", buf.len());
         self.stream.send_packet(&packet)?;
         self.stream.receive_ack()?;
@@ -63,6 +47,19 @@ impl GdbClient {
             let high = hex_char_to_byte(chunk[0] as char);
             let low = hex_char_to_byte(chunk[1] as char);
             buf[i] = (high << 4) | low;
+        }
+        Ok(())
+    }
+
+    pub fn read_slice(&mut self, mut address: u32, buf: &mut [u8]) -> Result<()> {
+        // Exclude $#(checksum) and divide by 2 for hex encoding
+        let max_read_length = (self.stream.packet_size().unwrap_or(usize::MAX) - 4) / 2;
+        let mut read_buf = buf;
+        while !read_buf.is_empty() {
+            let end = read_buf.len().min(max_read_length);
+            self.read_slice_part(address, &mut read_buf[..end])?;
+            address += end as u32;
+            read_buf = &mut read_buf[end..];
         }
         Ok(())
     }

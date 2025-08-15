@@ -11,11 +11,12 @@ use crate::hex_char_to_byte;
 #[derive(Default)]
 pub struct GdbStream {
     stream: Option<TcpStream>,
+    packet_size: Option<usize>,
 }
 
 impl GdbStream {
     pub fn new() -> Self {
-        GdbStream { stream: None }
+        GdbStream { stream: None, packet_size: None }
     }
 
     pub fn connect<A: ToSocketAddrs>(&mut self, address: A) -> Result<()> {
@@ -26,6 +27,21 @@ impl GdbStream {
         self.stream = Some(stream);
         self.send_ack().context("Failed to send initial ACK")?;
         self.receive_ack().context("Failed to receive initial ACK")?;
+
+        self.send_packet("qSupported:multiprocess").context("Failed to send qSupported packet")?;
+        self.receive_ack().context("Failed to receive ACK after qSupported")?;
+        let response = self.receive_packet().context("Failed to receive qSupported response")?;
+        self.send_ack().context("Failed to send ACK after qSupported")?;
+
+        for feature in response.split(';') {
+            let (name, value) = feature.split_once('=').unwrap_or((feature, ""));
+            if name == "PacketSize" {
+                let value =
+                    usize::from_str_radix(value, 16).context("Failed to parse PacketSize value")?;
+                self.packet_size = Some(value);
+            }
+        }
+
         Ok(())
     }
 
@@ -155,5 +171,9 @@ impl GdbStream {
             String::from_utf8(packet.to_vec()).context("Failed to parse GDB response")?;
         log::debug!("Received packet: {response}");
         Ok(response)
+    }
+
+    pub fn packet_size(&self) -> Option<usize> {
+        self.packet_size
     }
 }
