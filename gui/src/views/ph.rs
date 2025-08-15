@@ -7,6 +7,9 @@ use crate::{
     ui::type_decl::{AsDataWidget, TypeInstance},
 };
 
+const PLAYER_POS_ADDRESS: u32 = 0x027e0f94;
+const ACTOR_MANAGER_ADDRESS: u32 = 0x027e0fe4;
+
 pub struct View {
     client: Client,
     windows: Windows,
@@ -80,14 +83,15 @@ impl Window for PlayerWindow {
                     return;
                 };
 
-                state.request(0x027e0f94, vec3p_type.size(types));
+                state.request(PLAYER_POS_ADDRESS, vec3p_type.size(types));
 
-                let Some(player_data) = state.get_data(0x027e0f94).map(|d| d.to_vec()) else {
+                let Some(player_data) = state.get_data(PLAYER_POS_ADDRESS).map(|d| d.to_vec())
+                else {
                     ui.label("Player data not found");
                     return;
                 };
 
-                let instance = TypeInstance::new(&player_data);
+                let instance = TypeInstance::new(PLAYER_POS_ADDRESS, &player_data);
                 vec3p_type.as_data_widget(ui, types, instance).render_compound(ui, types, state);
             });
         });
@@ -105,8 +109,8 @@ impl Window for ActorsWindow {
         let mut open = self.open;
         egui::Window::new("Actors").open(&mut open).resizable(true).show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                state.request(0x027e0fe4, 0x4);
-                let actor_manager_data = state.get_data(0x027e0fe4).unwrap_or(&[0; 0x4]);
+                state.request(ACTOR_MANAGER_ADDRESS, 0x4);
+                let actor_manager_data = state.get_data(ACTOR_MANAGER_ADDRESS).unwrap_or(&[0; 0x4]);
                 let actor_manager_ptr =
                     u32::from_le_bytes(actor_manager_data.try_into().unwrap_or([0; 4]));
                 if actor_manager_ptr == 0 {
@@ -126,7 +130,7 @@ impl Window for ActorsWindow {
                     return;
                 };
 
-                let instance = TypeInstance::new(&actor_manager_data);
+                let instance = TypeInstance::new(actor_manager_ptr, &actor_manager_data);
                 actor_manager_type
                     .as_data_widget(ui, types, instance)
                     .render_compound(ui, types, state);

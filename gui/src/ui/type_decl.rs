@@ -11,7 +11,7 @@ const COLUMN_WIDTHS: &[f32] = &[75.0, 150.0, 100.0];
 pub trait DataWidget {
     fn render_value(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State);
 
-    fn render_compound(&self, ui: &mut egui::Ui, types: &Types, state: &mut State);
+    fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State);
 
     fn is_open(&self, _ui: &mut egui::Ui) -> bool {
         false
@@ -29,18 +29,19 @@ pub trait AsDataWidget {
 
 #[derive(Clone, Copy)]
 pub struct TypeInstance<'a> {
+    address: u32,
     data: &'a [u8],
 }
 
 impl<'a> TypeInstance<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
-        Self { data }
+    pub fn new(address: u32, data: &'a [u8]) -> Self {
+        Self { address, data }
     }
 
     fn slice(&self, offset: usize, size: usize) -> Self {
         let start = offset.min(self.data.len());
         let end = (offset + size).min(self.data.len());
-        Self::new(&self.data[start..end])
+        Self::new(self.address + offset as u32, &self.data[start..end])
     }
 
     fn get(&self, size: usize) -> &[u8] {
@@ -59,43 +60,43 @@ impl AsDataWidget for type_crawler::TypeKind {
         match self {
             type_crawler::TypeKind::USize { .. } => {
                 let value = u32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
-                Box::new(IntegerWidget::new(ui, value))
+                Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::SSize { .. } => {
                 let value = i32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
-                Box::new(IntegerWidget::new(ui, value))
+                Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::U64 => {
                 let value = u64::from_le_bytes(instance.get(8).try_into().unwrap_or([0; 8]));
-                Box::new(IntegerWidget::new(ui, value))
+                Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::U32 => {
                 let value = u32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
-                Box::new(IntegerWidget::new(ui, value))
+                Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::U16 => {
                 let value = u16::from_le_bytes(instance.get(2).try_into().unwrap_or([0; 2]));
-                Box::new(IntegerWidget::new(ui, value))
+                Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::U8 => {
                 let value = instance.get(1).first().copied().unwrap_or(0);
-                Box::new(IntegerWidget::new(ui, value))
+                Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::S64 => {
                 let value = i64::from_le_bytes(instance.get(8).try_into().unwrap_or([0; 8]));
-                Box::new(IntegerWidget::new(ui, value))
+                Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::S32 => {
                 let value = i32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
-                Box::new(IntegerWidget::new(ui, value))
+                Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::S16 => {
                 let value = i16::from_le_bytes(instance.get(2).try_into().unwrap_or([0; 2]));
-                Box::new(IntegerWidget::new(ui, value))
+                Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::S8 => {
                 let value = instance.get(1).first().copied().unwrap_or(0) as i8;
-                Box::new(IntegerWidget::new(ui, value))
+                Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::Bool => {
                 let value = instance.get(1).first().copied().unwrap_or(0);
@@ -109,12 +110,12 @@ impl AsDataWidget for type_crawler::TypeKind {
             type_crawler::TypeKind::Array { element_type, size: Some(size) } => {
                 Box::new(ArrayWidget::new(ui, *element_type.clone(), *size, instance))
             }
-            type_crawler::TypeKind::Array { size: None, .. } => {
-                Box::new(WipWidget { data_type: "incomplete array" })
+            type_crawler::TypeKind::Array { element_type, size: None } => {
+                Box::new(PointerWidget::new(ui, *element_type.clone(), instance.address))
             }
             type_crawler::TypeKind::Function { .. } => {
                 let value = u32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
-                Box::new(IntegerWidget::new(ui, value))
+                Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::Struct(struct_decl) => {
                 struct_decl.as_data_widget(ui, types, instance)
@@ -144,18 +145,19 @@ struct VoidWidget;
 impl DataWidget for VoidWidget {
     fn render_value(&mut self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
 
-    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
+    fn render_compound(&mut self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
 }
 
 struct IntegerWidget<T> {
+    kind: type_crawler::TypeKind,
     value: T,
     show_hex_id: egui::Id,
 }
 
 impl<T> IntegerWidget<T> {
-    fn new(ui: &mut egui::Ui, value: T) -> Self {
+    fn new(ui: &mut egui::Ui, kind: &type_crawler::TypeKind, value: T) -> Self {
         let show_hex_id = ui.make_persistent_id("show_hex");
-        Self { value, show_hex_id }
+        Self { kind: kind.clone(), value, show_hex_id }
     }
 }
 
@@ -181,7 +183,15 @@ where
         });
     }
 
-    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
+    fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
+        ui.indent("integer_compound", |ui| {
+            columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
+                ValueBadge::new(types, &self.kind).render(&mut columns[0]);
+                columns[1].label("Value");
+                self.render_value(&mut columns[2], types, state);
+            });
+        });
+    }
 }
 
 struct BoolWidget {
@@ -199,7 +209,15 @@ impl DataWidget for BoolWidget {
         ui.checkbox(&mut checked, text);
     }
 
-    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
+    fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
+        ui.indent("bool_compound", |ui| {
+            columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
+                ValueBadge::new(types, &type_crawler::TypeKind::Bool).render(&mut columns[0]);
+                columns[1].label("Value");
+                self.render_value(&mut columns[2], types, state);
+            });
+        });
+    }
 }
 
 struct ArrayWidget<'a> {
@@ -230,7 +248,7 @@ impl<'a> DataWidget for ArrayWidget<'a> {
         }
     }
 
-    fn render_compound(&self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
+    fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         ui.indent("array_compound", |ui| {
             let element_size = self.element_type.size(types);
             let stride = self.element_type.stride(types);
@@ -241,7 +259,7 @@ impl<'a> DataWidget for ArrayWidget<'a> {
                 ui.push_id(i, |ui| {
                     let mut widget = self.element_type.as_data_widget(ui, types, field_instance);
                     columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
-                        render_value_badge(&mut columns[0], types, &self.element_type);
+                        ValueBadge::new(types, &self.element_type).render(&mut columns[0]);
                         columns[1].label(format!("[{i}]"));
                         widget.render_value(&mut columns[2], types, state);
                     });
@@ -295,7 +313,7 @@ impl DataWidget for PointerWidget {
         });
     }
 
-    fn render_compound(&self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
+    fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         let list_length =
             ui.ctx().data_mut(|data| data.get_temp::<usize>(self.list_length_id).unwrap_or(1));
         let stride = self.pointee_type.stride(types);
@@ -309,7 +327,7 @@ impl DataWidget for PointerWidget {
             ui.label("Pointer data not found");
             return;
         };
-        let instance = TypeInstance::new(&data);
+        let instance = TypeInstance::new(self.address, &data);
 
         if list_length == 1 {
             self.pointee_type.as_data_widget(ui, types, instance).render_compound(ui, types, state);
@@ -323,7 +341,7 @@ impl DataWidget for PointerWidget {
 
                     let mut widget = self.pointee_type.as_data_widget(ui, types, field_instance);
                     columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
-                        render_value_badge(&mut columns[0], types, &self.pointee_type);
+                        ValueBadge::new(types, &self.pointee_type).render(&mut columns[0]);
                         columns[1].label(format!("[{i}]"));
                         widget.render_value(&mut columns[2], types, state);
                     });
@@ -340,26 +358,6 @@ impl DataWidget for PointerWidget {
     }
 }
 
-struct WipWidget {
-    data_type: &'static str,
-}
-
-impl DataWidget for WipWidget {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
-        ui.label(
-            egui::RichText::new(format!("{} value not implemented", self.data_type))
-                .color(egui::Color32::RED),
-        );
-    }
-
-    fn render_compound(&self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
-        ui.label(
-            egui::RichText::new(format!("{} compound not implemented", self.data_type))
-                .color(egui::Color32::RED),
-        );
-    }
-}
-
 struct NotFoundWidget {
     name: String,
 }
@@ -372,7 +370,7 @@ impl DataWidget for NotFoundWidget {
         );
     }
 
-    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
+    fn render_compound(&mut self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
 }
 
 struct Fx32Widget {
@@ -408,7 +406,16 @@ impl DataWidget for Fx32Widget {
         });
     }
 
-    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
+    fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
+        ui.indent("fx32_compound", |ui| {
+            columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
+                ValueBadge::new(types, &type_crawler::TypeKind::Named("q20".to_string()))
+                    .render(&mut columns[0]);
+                columns[1].label("Value");
+                self.render_value(&mut columns[2], types, state);
+            });
+        });
+    }
 }
 
 impl AsDataWidget for type_crawler::TypeDecl {
@@ -482,7 +489,15 @@ impl DataWidget for EnumWidget {
             });
     }
 
-    fn render_compound(&self, _ui: &mut egui::Ui, _types: &Types, _state: &mut State) {}
+    fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
+        ui.indent("enum_compound", |ui| {
+            columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
+                ValueBadge::new_enum(&self.enum_decl).render(&mut columns[0]);
+                columns[1].label("Value");
+                self.render_value(&mut columns[2], types, state);
+            });
+        });
+    }
 }
 
 struct StructWidget<'a> {
@@ -522,7 +537,7 @@ impl<'a> DataWidget for StructWidget<'a> {
         }
     }
 
-    fn render_compound(&self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
+    fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         ui.indent("struct_compound", |ui| {
             for field in self.struct_decl.fields() {
                 let offset = field.offset_bytes();
@@ -532,7 +547,7 @@ impl<'a> DataWidget for StructWidget<'a> {
                 ui.push_id(offset, |ui| {
                     let mut widget = field.kind().as_data_widget(ui, types, field_instance);
                     columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
-                        render_value_badge(&mut columns[0], types, field.kind());
+                        ValueBadge::new(types, field.kind()).render(&mut columns[0]);
                         columns[1].label(field.name().unwrap_or(""));
                         widget.render_value(&mut columns[2], types, state);
                     });
@@ -586,7 +601,7 @@ impl<'a> DataWidget for UnionWidget<'a> {
         }
     }
 
-    fn render_compound(&self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
+    fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         ui.indent("union_compound", |ui| {
             for (i, field) in self.union_decl.fields().iter().enumerate() {
                 let size = field.kind().size(types);
@@ -595,7 +610,7 @@ impl<'a> DataWidget for UnionWidget<'a> {
                 ui.push_id(i, |ui| {
                     let mut widget = field.kind().as_data_widget(ui, types, field_instance);
                     columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
-                        render_value_badge(&mut columns[0], types, field.kind());
+                        ValueBadge::new(types, field.kind()).render(&mut columns[0]);
                         columns[1].label(field.name().unwrap_or(""));
                         widget.render_value(&mut columns[2], types, state);
                     });
@@ -612,194 +627,196 @@ impl<'a> DataWidget for UnionWidget<'a> {
     }
 }
 
-fn render_value_badge(ui: &mut egui::Ui, types: &Types, kind: &type_crawler::TypeKind) {
-    let BadgeStyle { text, tooltip, background, color } = value_badge_style(types, kind);
-    let label = ui.label(
-        egui::RichText::new(text)
-            .background_color(egui::Color32::from_hex(background).unwrap())
-            .color(egui::Color32::from_hex(color).unwrap()),
-    );
-    if label.hovered()
-        && let Some(tooltip) = tooltip
-    {
-        egui::Tooltip::for_widget(&label).at_pointer().gap(12.0).show(|ui| {
-            ui.label(tooltip);
-        });
-    }
-}
-
-struct BadgeStyle<'a> {
+struct ValueBadge<'a> {
     text: Cow<'a, str>,
     tooltip: Option<String>,
     background: &'static str,
     color: &'static str,
 }
 
-fn value_badge_style<'a>(types: &'a Types, kind: &'a type_crawler::TypeKind) -> BadgeStyle<'a> {
-    match kind {
-        type_crawler::TypeKind::USize { .. } => BadgeStyle {
-            text: "usize".into(),
-            tooltip: None,
-            background: "#224eff",
-            color: "#ffffff",
-        },
-        type_crawler::TypeKind::SSize { .. } => BadgeStyle {
-            text: "ssize".into(),
-            tooltip: None,
-            background: "#ff4e22",
-            color: "#ffffff",
-        },
-        type_crawler::TypeKind::U64 => BadgeStyle {
-            text: "u64".into(),
-            tooltip: None,
-            background: "#0033ff",
-            color: "#ffffff",
-        },
-        type_crawler::TypeKind::U32 => BadgeStyle {
-            text: "u32".into(),
-            tooltip: None,
-            background: "#466bff",
-            color: "#ffffff",
-        },
-        type_crawler::TypeKind::U16 => BadgeStyle {
-            text: "u16".into(),
-            tooltip: None,
-            background: "#7691ff",
-            color: "#ffffff",
-        },
-        type_crawler::TypeKind::U8 => BadgeStyle {
-            text: "u8".into(),
-            tooltip: None,
-            background: "#a9baff",
-            color: "#000000",
-        },
-        type_crawler::TypeKind::S64 => BadgeStyle {
-            text: "s64".into(),
-            tooltip: None,
-            background: "#ff3300",
-            color: "#ffffff",
-        },
-        type_crawler::TypeKind::S32 => BadgeStyle {
-            text: "s32".into(),
-            tooltip: None,
-            background: "#ff6b46",
-            color: "#000000",
-        },
-        type_crawler::TypeKind::S16 => BadgeStyle {
-            text: "s16".into(),
-            tooltip: None,
-            background: "#ff9176",
-            color: "#000000",
-        },
-        type_crawler::TypeKind::S8 => BadgeStyle {
-            text: "s8".into(),
-            tooltip: None,
-            background: "#ffbaa9",
-            color: "#000000",
-        },
-        type_crawler::TypeKind::Bool => BadgeStyle {
-            text: "bool".into(),
-            tooltip: None,
-            background: "#008d00",
-            color: "#ffffff",
-        },
-        type_crawler::TypeKind::Void => BadgeStyle {
-            text: "void".into(),
-            tooltip: None,
-            background: "#242424",
-            color: "#ffffff",
-        },
-        type_crawler::TypeKind::Pointer { pointee_type, .. } => {
-            let BadgeStyle { text, tooltip, background, color } =
-                value_badge_style(types, pointee_type);
-            let text = tooltip.as_deref().unwrap_or(&text);
-            let (new_text, tooltip) = if text.len() <= 10 {
-                (format!("{text}*").into(), None)
-            } else {
-                ("pointer".into(), Some(format!("{text}*")))
-            };
-            BadgeStyle { text: new_text, tooltip, background, color }
+impl<'a> ValueBadge<'a> {
+    fn render(self, ui: &mut egui::Ui) {
+        let label = ui.label(
+            egui::RichText::new(self.text)
+                .background_color(egui::Color32::from_hex(self.background).unwrap())
+                .color(egui::Color32::from_hex(self.color).unwrap()),
+        );
+        if label.hovered()
+            && let Some(tooltip) = self.tooltip
+        {
+            egui::Tooltip::for_widget(&label).at_pointer().gap(12.0).show(|ui| {
+                ui.label(tooltip);
+            });
         }
-        type_crawler::TypeKind::Array { element_type, .. } => {
-            let BadgeStyle { text, tooltip, background, color } =
-                value_badge_style(types, element_type);
-            let text = tooltip.as_deref().unwrap_or(&text);
-            let (new_text, tooltip) = if text.len() <= 10 {
-                (format!("{text}[]").into(), None)
-            } else {
-                ("array".into(), Some(format!("{text}[]")))
-            };
-            BadgeStyle { text: new_text, tooltip, background, color }
-        }
-        type_crawler::TypeKind::Function { .. } => BadgeStyle {
-            text: "fn".into(),
-            tooltip: None,
-            background: "#35620bff",
-            color: "#ffffff",
-        },
-        type_crawler::TypeKind::Struct(struct_decl) => struct_badge_style(struct_decl),
-        type_crawler::TypeKind::Union(union_decl) => union_badge_style(union_decl),
-        type_crawler::TypeKind::Named(name) => match name.as_str() {
-            "q20" => BadgeStyle {
-                text: "q20".into(),
+    }
+    fn new(types: &'a Types, kind: &'a type_crawler::TypeKind) -> Self {
+        match kind {
+            type_crawler::TypeKind::USize { .. } => ValueBadge {
+                text: "usize".into(),
                 tooltip: None,
-                background: "#006abb",
+                background: "#224eff",
                 color: "#ffffff",
             },
-            _ => {
-                let Some(type_decl) = types.get(name) else {
-                    return BadgeStyle {
-                        text: "unknown".into(),
-                        tooltip: None,
-                        background: "#000000ff",
-                        color: "#ffffff",
-                    };
+            type_crawler::TypeKind::SSize { .. } => ValueBadge {
+                text: "ssize".into(),
+                tooltip: None,
+                background: "#ff4e22",
+                color: "#ffffff",
+            },
+            type_crawler::TypeKind::U64 => ValueBadge {
+                text: "u64".into(),
+                tooltip: None,
+                background: "#0033ff",
+                color: "#ffffff",
+            },
+            type_crawler::TypeKind::U32 => ValueBadge {
+                text: "u32".into(),
+                tooltip: None,
+                background: "#466bff",
+                color: "#ffffff",
+            },
+            type_crawler::TypeKind::U16 => ValueBadge {
+                text: "u16".into(),
+                tooltip: None,
+                background: "#7691ff",
+                color: "#ffffff",
+            },
+            type_crawler::TypeKind::U8 => ValueBadge {
+                text: "u8".into(),
+                tooltip: None,
+                background: "#a9baff",
+                color: "#000000",
+            },
+            type_crawler::TypeKind::S64 => ValueBadge {
+                text: "s64".into(),
+                tooltip: None,
+                background: "#ff3300",
+                color: "#ffffff",
+            },
+            type_crawler::TypeKind::S32 => ValueBadge {
+                text: "s32".into(),
+                tooltip: None,
+                background: "#ff6b46",
+                color: "#000000",
+            },
+            type_crawler::TypeKind::S16 => ValueBadge {
+                text: "s16".into(),
+                tooltip: None,
+                background: "#ff9176",
+                color: "#000000",
+            },
+            type_crawler::TypeKind::S8 => ValueBadge {
+                text: "s8".into(),
+                tooltip: None,
+                background: "#ffbaa9",
+                color: "#000000",
+            },
+            type_crawler::TypeKind::Bool => ValueBadge {
+                text: "bool".into(),
+                tooltip: None,
+                background: "#008d00",
+                color: "#ffffff",
+            },
+            type_crawler::TypeKind::Void => ValueBadge {
+                text: "void".into(),
+                tooltip: None,
+                background: "#242424",
+                color: "#ffffff",
+            },
+            type_crawler::TypeKind::Pointer { pointee_type, .. } => {
+                let ValueBadge { text, tooltip, background, color } =
+                    Self::new(types, pointee_type);
+                let text = tooltip.as_deref().unwrap_or(&text);
+                let (new_text, tooltip) = if text.len() <= 10 {
+                    (format!("{text}*").into(), None)
+                } else {
+                    ("pointer".into(), Some(format!("{text}*")))
                 };
-                match type_decl {
-                    type_crawler::TypeDecl::Typedef(typedef) => {
-                        value_badge_style(types, typedef.underlying_type())
-                    }
-                    type_crawler::TypeDecl::Enum(enum_decl) => enum_badge_style(enum_decl),
-                    type_crawler::TypeDecl::Struct(struct_decl) => struct_badge_style(struct_decl),
-                    type_crawler::TypeDecl::Union(union_decl) => union_badge_style(union_decl),
-                }
+                ValueBadge { text: new_text, tooltip, background, color }
             }
-        },
+            type_crawler::TypeKind::Array { element_type, .. } => {
+                let ValueBadge { text, tooltip, background, color } =
+                    Self::new(types, element_type);
+                let text = tooltip.as_deref().unwrap_or(&text);
+                let (new_text, tooltip) = if text.len() <= 10 {
+                    (format!("{text}[]").into(), None)
+                } else {
+                    ("array".into(), Some(format!("{text}[]")))
+                };
+                ValueBadge { text: new_text, tooltip, background, color }
+            }
+            type_crawler::TypeKind::Function { .. } => ValueBadge {
+                text: "fn".into(),
+                tooltip: None,
+                background: "#35620bff",
+                color: "#ffffff",
+            },
+            type_crawler::TypeKind::Struct(struct_decl) => Self::new_struct(struct_decl),
+            type_crawler::TypeKind::Union(union_decl) => Self::new_union(union_decl),
+            type_crawler::TypeKind::Named(name) => match name.as_str() {
+                "q20" => ValueBadge {
+                    text: "q20".into(),
+                    tooltip: None,
+                    background: "#006abb",
+                    color: "#ffffff",
+                },
+                _ => {
+                    let Some(type_decl) = types.get(name) else {
+                        return ValueBadge {
+                            text: "unknown".into(),
+                            tooltip: None,
+                            background: "#000000ff",
+                            color: "#ffffff",
+                        };
+                    };
+                    match type_decl {
+                        type_crawler::TypeDecl::Typedef(typedef) => {
+                            Self::new(types, typedef.underlying_type())
+                        }
+                        type_crawler::TypeDecl::Enum(enum_decl) => Self::new_enum(enum_decl),
+                        type_crawler::TypeDecl::Struct(struct_decl) => {
+                            Self::new_struct(struct_decl)
+                        }
+                        type_crawler::TypeDecl::Union(union_decl) => Self::new_union(union_decl),
+                    }
+                }
+            },
+        }
     }
-}
 
-fn struct_badge_style(struct_decl: &'_ type_crawler::StructDecl) -> BadgeStyle<'_> {
-    let full_name = struct_decl.name();
-    let (text, tooltip) = if let Some(name) = full_name
-        && name.len() <= 10
-    {
-        (name.into(), None)
-    } else {
-        ("struct".into(), full_name.map(|n| n.to_string()))
-    };
-    BadgeStyle { text, tooltip, background: "#af1cc9", color: "#ffffff" }
-}
+    fn new_struct(struct_decl: &'a type_crawler::StructDecl) -> Self {
+        let full_name = struct_decl.name();
+        let (text, tooltip) = if let Some(name) = full_name
+            && name.len() <= 10
+        {
+            (name.into(), None)
+        } else {
+            ("struct".into(), full_name.map(|n| n.to_string()))
+        };
+        ValueBadge { text, tooltip, background: "#af1cc9", color: "#ffffff" }
+    }
 
-fn union_badge_style(union_decl: &'_ type_crawler::UnionDecl) -> BadgeStyle<'_> {
-    let full_name = union_decl.name();
-    let (text, tooltip) = if let Some(name) = full_name
-        && name.len() <= 10
-    {
-        (name.into(), None)
-    } else {
-        ("union".into(), full_name.map(|n| n.to_string()))
-    };
-    BadgeStyle { text, tooltip, background: "#c9bb1c", color: "#000000" }
-}
+    fn new_union(union_decl: &'a type_crawler::UnionDecl) -> Self {
+        let full_name = union_decl.name();
+        let (text, tooltip) = if let Some(name) = full_name
+            && name.len() <= 10
+        {
+            (name.into(), None)
+        } else {
+            ("union".into(), full_name.map(|n| n.to_string()))
+        };
+        ValueBadge { text, tooltip, background: "#c9bb1c", color: "#000000" }
+    }
 
-fn enum_badge_style(enum_decl: &'_ type_crawler::EnumDecl) -> BadgeStyle<'_> {
-    let full_name = enum_decl.name();
-    let (text, tooltip) = if let Some(name) = full_name
-        && name.len() <= 10
-    {
-        (name.into(), None)
-    } else {
-        ("enum".into(), full_name.map(|n| n.to_string()))
-    };
-    BadgeStyle { text, tooltip, background: "#ff8c00", color: "#ffffff" }
+    fn new_enum(enum_decl: &'a type_crawler::EnumDecl) -> Self {
+        let full_name = enum_decl.name();
+        let (text, tooltip) = if let Some(name) = full_name
+            && name.len() <= 10
+        {
+            (name.into(), None)
+        } else {
+            ("enum".into(), full_name.map(|n| n.to_string()))
+        };
+        ValueBadge { text, tooltip, background: "#ff8c00", color: "#ffffff" }
+    }
 }
