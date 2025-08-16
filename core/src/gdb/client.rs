@@ -76,6 +76,20 @@ impl GdbClient {
         Ok(u16::from_le_bytes(buf))
     }
 
+    pub fn write_slice(&mut self, address: u32, buf: &[u8]) -> Result<()> {
+        let length = buf.len();
+        let mut data = String::with_capacity(length * 2);
+        for &byte in buf {
+            data.push_str(&format!("{:02x}", byte));
+        }
+        self.stream.send_packet(&format!("M {address:x},{length:x}:{data}"))?;
+        self.stream.receive_ack()?;
+        let response = self.stream.receive_packet()?;
+        self.handle_error(&response)?;
+        self.stream.send_ack()?;
+        Ok(())
+    }
+
     pub fn continue_execution(&mut self) -> Result<()> {
         self.stream.send_packet("c")?;
         self.stream.receive_ack()?;

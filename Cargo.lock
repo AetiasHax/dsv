@@ -897,7 +897,6 @@ name = "dzv-gui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytemuck",
  "dzv-core",
  "eframe",
  "egui_extras",

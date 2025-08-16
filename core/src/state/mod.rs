@@ -8,10 +8,15 @@ use crate::gdb::client::GdbClient;
 pub struct State {
     data_objects: BTreeMap<u32, Vec<u8>>,
     requests: BTreeMap<u32, u32>,
+    writes: Vec<(u32, Vec<u8>)>,
 }
 
 impl State {
     pub fn update(&mut self, gdb: &mut GdbClient) -> Result<()> {
+        for (address, data) in self.writes.drain(..) {
+            gdb.write_slice(address, &data)?;
+        }
+
         for (&address, &length) in self.requests.iter() {
             let buffer = self.data_objects.entry(address).or_default();
             buffer.resize(length as usize, 0);
@@ -23,6 +28,10 @@ impl State {
 
     pub fn request(&mut self, address: u32, length: usize) {
         self.requests.insert(address, length as u32);
+    }
+
+    pub fn request_write(&mut self, address: u32, data: Vec<u8>) {
+        self.writes.push((address, data));
     }
 
     pub fn get_data(&self, address: u32) -> Option<&[u8]> {

@@ -37,47 +37,47 @@ impl AsDataWidget for type_crawler::TypeKind {
         match self {
             type_crawler::TypeKind::USize { .. } => {
                 let value = u32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
-                Box::new(IntegerWidget::new(ui, self, value))
+                Box::new(IntegerWidget::new(ui, self, instance.address(), value))
             }
             type_crawler::TypeKind::SSize { .. } => {
                 let value = i32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
-                Box::new(IntegerWidget::new(ui, self, value))
+                Box::new(IntegerWidget::new(ui, self, instance.address(), value))
             }
             type_crawler::TypeKind::U64 => {
                 let value = u64::from_le_bytes(instance.data().try_into().unwrap_or([0; 8]));
-                Box::new(IntegerWidget::new(ui, self, value))
+                Box::new(IntegerWidget::new(ui, self, instance.address(), value))
             }
             type_crawler::TypeKind::U32 => {
                 let value = u32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
-                Box::new(IntegerWidget::new(ui, self, value))
+                Box::new(IntegerWidget::new(ui, self, instance.address(), value))
             }
             type_crawler::TypeKind::U16 => {
                 let value = u16::from_le_bytes(instance.data().try_into().unwrap_or([0; 2]));
-                Box::new(IntegerWidget::new(ui, self, value))
+                Box::new(IntegerWidget::new(ui, self, instance.address(), value))
             }
             type_crawler::TypeKind::U8 => {
                 let value = instance.data().first().copied().unwrap_or(0);
-                Box::new(IntegerWidget::new(ui, self, value))
+                Box::new(IntegerWidget::new(ui, self, instance.address(), value))
             }
             type_crawler::TypeKind::S64 => {
                 let value = i64::from_le_bytes(instance.data().try_into().unwrap_or([0; 8]));
-                Box::new(IntegerWidget::new(ui, self, value))
+                Box::new(IntegerWidget::new(ui, self, instance.address(), value))
             }
             type_crawler::TypeKind::S32 => {
                 let value = i32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
-                Box::new(IntegerWidget::new(ui, self, value))
+                Box::new(IntegerWidget::new(ui, self, instance.address(), value))
             }
             type_crawler::TypeKind::S16 => {
                 let value = i16::from_le_bytes(instance.data().try_into().unwrap_or([0; 2]));
-                Box::new(IntegerWidget::new(ui, self, value))
+                Box::new(IntegerWidget::new(ui, self, instance.address(), value))
             }
             type_crawler::TypeKind::S8 => {
                 let value = instance.data().first().copied().unwrap_or(0) as i8;
-                Box::new(IntegerWidget::new(ui, self, value))
+                Box::new(IntegerWidget::new(ui, self, instance.address(), value))
             }
             type_crawler::TypeKind::Bool => {
                 let value = instance.data().first().copied().unwrap_or(0);
-                Box::new(BoolWidget { value })
+                Box::new(BoolWidget { value, address: instance.address() })
             }
             type_crawler::TypeKind::Void => Box::new(VoidWidget),
             type_crawler::TypeKind::Pointer { pointee_type, .. } => {
@@ -92,7 +92,7 @@ impl AsDataWidget for type_crawler::TypeKind {
             }
             type_crawler::TypeKind::Function { .. } => {
                 let value = u32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
-                Box::new(IntegerWidget::new(ui, self, value))
+                Box::new(IntegerWidget::new(ui, self, instance.address(), value))
             }
             type_crawler::TypeKind::Struct(struct_decl) => {
                 struct_decl.as_data_widget(ui, types, instance)
@@ -107,7 +107,7 @@ impl AsDataWidget for type_crawler::TypeKind {
             type_crawler::TypeKind::Named(name) => match name.as_str() {
                 "q20" => {
                     let value = i32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
-                    Box::new(Fx32Widget::new(ui, value))
+                    Box::new(Fx32Widget::new(ui, instance.address(), value))
                 }
                 _ => {
                     if let Some(type_decl) = types.get(name) {
@@ -131,14 +131,17 @@ impl DataWidget for VoidWidget {
 
 struct IntegerWidget<T> {
     kind: type_crawler::TypeKind,
+    address: u32,
     value: T,
     show_hex_id: egui::Id,
+    text_id: egui::Id,
 }
 
 impl<T> IntegerWidget<T> {
-    fn new(ui: &mut egui::Ui, kind: &type_crawler::TypeKind, value: T) -> Self {
+    fn new(ui: &mut egui::Ui, kind: &type_crawler::TypeKind, address: u32, value: T) -> Self {
         let show_hex_id = ui.make_persistent_id("show_hex");
-        Self { kind: kind.clone(), value, show_hex_id }
+        let text_id = ui.make_persistent_id("value");
+        Self { kind: kind.clone(), address, value, show_hex_id, text_id }
     }
 }
 
@@ -146,16 +149,32 @@ impl<T> DataWidget for IntegerWidget<T>
 where
     T: std::fmt::LowerHex + std::fmt::Display + Copy,
 {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
+    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, state: &mut State) {
         ui.horizontal(|ui| {
             let mut show_hex =
                 ui.ctx().data_mut(|data| data.get_temp::<bool>(self.show_hex_id).unwrap_or(false));
-            let mut text = if show_hex {
-                format!("{:#x}", self.value)
-            } else {
-                self.value.to_string()
-            };
-            egui::TextEdit::singleline(&mut text).desired_width(70.0).show(ui);
+            let mut text =
+                ui.ctx().data_mut(|data| data.get_temp::<String>(self.text_id).unwrap_or_default());
+
+            let text_edit =
+                egui::TextEdit::singleline(&mut text).desired_width(70.0).show(ui).response;
+
+            if text_edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                let value = if show_hex {
+                    u32::from_str_radix(&text, 16).unwrap_or(0)
+                } else {
+                    text.parse::<u32>().unwrap_or(0)
+                };
+                state.request_write(self.address, value.to_le_bytes().to_vec());
+            }
+            if !text_edit.has_focus() {
+                text = if show_hex {
+                    format!("{:#x}", self.value)
+                } else {
+                    self.value.to_string()
+                };
+            }
+            ui.ctx().data_mut(|data| data.insert_temp(self.text_id, text));
 
             if ui.selectable_label(show_hex, "0x").clicked() {
                 show_hex = !show_hex;
@@ -177,17 +196,20 @@ where
 
 struct BoolWidget {
     value: u8,
+    address: u32,
 }
 
 impl DataWidget for BoolWidget {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
+    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, state: &mut State) {
         let mut checked = self.value != 0;
         let text: Cow<str> = if self.value > 1 {
             format!("(0x{:02x})", self.value).into()
         } else {
             "".into()
         };
-        ui.checkbox(&mut checked, text);
+        if ui.checkbox(&mut checked, text).changed() {
+            state.request_write(self.address, if checked { vec![1] } else { vec![0] });
+        }
     }
 
     fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
@@ -357,30 +379,48 @@ impl DataWidget for NotFoundWidget {
 }
 
 struct Fx32Widget {
+    address: u32,
     value: i32,
     show_hex_id: egui::Id,
+    text_id: egui::Id,
 }
 
 impl Fx32Widget {
-    fn new(ui: &mut egui::Ui, value: i32) -> Self {
+    fn new(ui: &mut egui::Ui, address: u32, value: i32) -> Self {
         let show_hex_id = ui.make_persistent_id("show_hex");
-        Self { value, show_hex_id }
+        let text_id = ui.make_persistent_id("text");
+        Self { address, value, show_hex_id, text_id }
     }
 }
 
 impl DataWidget for Fx32Widget {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
+    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, state: &mut State) {
         ui.horizontal(|ui| {
             let mut show_hex =
                 ui.ctx().data_mut(|data| data.get_temp::<bool>(self.show_hex_id).unwrap_or(false));
+            let mut text =
+                ui.ctx().data_mut(|data| data.get_temp::<String>(self.text_id).unwrap_or_default());
 
-            let mut text = if show_hex {
-                format!("{:#x}", self.value)
-            } else {
-                let q20 = self.value as f32 / 4096.0;
-                format!("{:.5}", q20)
-            };
-            egui::TextEdit::singleline(&mut text).desired_width(70.0).show(ui);
+            let text_edit =
+                egui::TextEdit::singleline(&mut text).desired_width(70.0).show(ui).response;
+
+            if text_edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                let value = if show_hex {
+                    i32::from_str_radix(&text, 16).unwrap_or(0)
+                } else {
+                    (text.parse::<f32>().unwrap_or(0.0) * 4096.0) as i32
+                };
+                state.request_write(self.address, value.to_le_bytes().to_vec());
+            }
+            if !text_edit.has_focus() {
+                text = if show_hex {
+                    format!("{:#x}", self.value)
+                } else {
+                    let q20 = self.value as f32 / 4096.0;
+                    format!("{:.5}", q20)
+                };
+            }
+            ui.ctx().data_mut(|data| data.insert_temp(self.text_id, text));
 
             if ui.selectable_label(show_hex, "0x").clicked() {
                 show_hex = !show_hex;
@@ -429,7 +469,7 @@ impl AsDataWidget for type_crawler::EnumDecl {
 }
 
 impl<'a> DataWidget for EnumWidget<'a> {
-    fn render_value(&mut self, ui: &mut egui::Ui, types: &Types, _state: &mut State) {
+    fn render_value(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         let size = self.enum_decl.size();
         let mut bytes = [0u8; 8];
         bytes[0..size].copy_from_slice(
@@ -448,7 +488,16 @@ impl<'a> DataWidget for EnumWidget<'a> {
 
         egui::ComboBox::new("enum_value", "").selected_text(selected_text).show_ui(ui, |ui| {
             for constant in self.enum_decl.constants() {
-                ui.selectable_value(&mut value, constant.value(), constant.name());
+                if ui.selectable_value(&mut value, constant.value(), constant.name()).clicked() {
+                    let constant_bytes = match size {
+                        1 => (constant.value() as u8).to_le_bytes().to_vec(),
+                        2 => (constant.value() as u16).to_le_bytes().to_vec(),
+                        4 => (constant.value() as u32).to_le_bytes().to_vec(),
+                        8 => (constant.value() as u64).to_le_bytes().to_vec(),
+                        _ => panic!("Unsupported enum size"),
+                    };
+                    state.request_write(self.instance.address(), constant_bytes);
+                }
             }
         });
     }

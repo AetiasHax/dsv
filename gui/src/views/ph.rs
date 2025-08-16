@@ -32,7 +32,7 @@ pub struct View {
 }
 
 struct Windows {
-    player: PlayerWindow,
+    player_pos: PlayerPosWindow,
     actor_manager: ActorManagerWindow,
     actors: ActorsWindow,
     actor_list: BTreeSet<ActorWindow>,
@@ -48,7 +48,7 @@ impl View {
 impl Default for Windows {
     fn default() -> Self {
         Self {
-            player: Default::default(),
+            player_pos: Default::default(),
             actor_manager: Default::default(),
             actors: Default::default(),
             actor_list: Default::default(),
@@ -91,7 +91,7 @@ impl Default for Windows {
                 BasicWindow {
                     open: false,
                     title: "Player",
-                    type_name: "Player",
+                    type_name: "PlayerBase",
                     address: PLAYER_ADDRESS,
                     pointer: true,
                 },
@@ -154,7 +154,7 @@ impl super::View for View {
             ui.with_layout(
                 egui::Layout::top_down(egui::Align::LEFT).with_cross_justify(true),
                 |ui| {
-                    ui.toggle_value(&mut self.windows.player.open, "Player");
+                    ui.toggle_value(&mut self.windows.player_pos.open, "Player position");
                     ui.toggle_value(&mut self.windows.actor_manager.open, "Actor manager");
                     ui.toggle_value(&mut self.windows.actors.open, "Actors");
                     for window in &mut self.windows.basic_windows {
@@ -180,7 +180,7 @@ impl super::View for View {
             .as_table_mut()
             .ok_or_else(|| anyhow::anyhow!("Failed to get 'ph' config as a table"))?;
 
-        self.windows.player.render(ctx, types, &mut state);
+        self.windows.player_pos.render(ctx, types, &mut state);
         self.windows.actor_manager.render(ctx, types, &mut state);
         self.windows.actors.render(ctx, types, &mut state, &mut self.windows.actor_list);
 
@@ -243,14 +243,14 @@ fn read_pointer_object<'a>(
 }
 
 #[derive(Default)]
-struct PlayerWindow {
+struct PlayerPosWindow {
     open: bool,
 }
 
-impl PlayerWindow {
+impl PlayerPosWindow {
     fn render(&mut self, ctx: &egui::Context, types: &type_crawler::Types, state: &mut State) {
         let mut open = self.open;
-        egui::Window::new("Player").open(&mut open).resizable(false).show(ctx, |ui| {
+        egui::Window::new("Player position").open(&mut open).resizable(false).show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let player_pos = match read_object(types, state, "Vec3p", PLAYER_POS_ADDRESS) {
                     Ok(instance) => instance,
@@ -311,7 +311,10 @@ fn get_actor_table(
     let Some(actors_data) = state.get_data(actor_table) else {
         return Err("Actors data not found".into());
     };
-    let actors_data: Vec<u32> = bytemuck::cast_slice(actors_data).to_vec();
+    let actors_data: Vec<u32> = actors_data
+        .chunks_exact(4)
+        .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap_or([0; 4])))
+        .collect();
     Ok(actors_data)
 }
 
