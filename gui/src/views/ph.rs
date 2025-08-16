@@ -13,23 +13,132 @@ use crate::{
 
 const PLAYER_POS_ADDRESS: u32 = 0x027e0f94;
 const ACTOR_MANAGER_ADDRESS: u32 = 0x027e0fe4;
+const GAME_ADDRESS: u32 = 0x027e0618;
+const MESSAGE_MANAGER_ADDRESS: u32 = 0x027e0c68;
+const TOUCH_CONTROL_ADDRESS: u32 = 0x027e0d78;
+const MAP_MANAGER_ADDRESS: u32 = 0x027e0e60;
+const ADVENTURE_FLAGS_ADDRESS: u32 = 0x027e0f74;
+const PLAYER_ADDRESS: u32 = 0x027e0f90;
+const ITEM_MANAGER_ADDRESS: u32 = 0x027e0fb4;
+const PLAYER_CONTROL_ADDRESS: u32 = 0x027e0fb8;
+const PLAYER_MANAGER_ADDRESS: u32 = 0x027e0fbc;
+const ITEM_MODEL_LOADER_ADDRESS: u32 = 0x027e0fc4;
+const PLAYER_CONTROL_DATA_ADDRESS: u32 = 0x027e0fcc;
+const LINK_STATE_ADDRESS: u32 = 0x027e0fd0;
 
 pub struct View {
     client: Client,
     windows: Windows,
 }
 
-#[derive(Default)]
 struct Windows {
     player: PlayerWindow,
     actor_manager: ActorManagerWindow,
     actors: ActorsWindow,
     actor_list: BTreeSet<ActorWindow>,
+    basic_windows: [BasicWindow; 12],
 }
 
 impl View {
     pub fn new(gdb_client: GdbClient) -> Self {
         View { client: Client::new(gdb_client), windows: Windows::default() }
+    }
+}
+
+impl Default for Windows {
+    fn default() -> Self {
+        Self {
+            player: Default::default(),
+            actor_manager: Default::default(),
+            actors: Default::default(),
+            actor_list: Default::default(),
+            basic_windows: [
+                BasicWindow {
+                    open: false,
+                    title: "Game",
+                    type_name: "Game",
+                    address: GAME_ADDRESS,
+                    pointer: false,
+                },
+                BasicWindow {
+                    open: false,
+                    title: "Message manager",
+                    type_name: "MessageManager",
+                    address: MESSAGE_MANAGER_ADDRESS,
+                    pointer: false,
+                },
+                BasicWindow {
+                    open: false,
+                    title: "Touch control",
+                    type_name: "TouchControl",
+                    address: TOUCH_CONTROL_ADDRESS,
+                    pointer: false,
+                },
+                BasicWindow {
+                    open: false,
+                    title: "Map manager",
+                    type_name: "MapManager",
+                    address: MAP_MANAGER_ADDRESS,
+                    pointer: true,
+                },
+                BasicWindow {
+                    open: false,
+                    title: "Adventure flags",
+                    type_name: "AdventureFlags",
+                    address: ADVENTURE_FLAGS_ADDRESS,
+                    pointer: true,
+                },
+                BasicWindow {
+                    open: false,
+                    title: "Player",
+                    type_name: "Player",
+                    address: PLAYER_ADDRESS,
+                    pointer: true,
+                },
+                BasicWindow {
+                    open: false,
+                    title: "Item manager",
+                    type_name: "ItemManager",
+                    address: ITEM_MANAGER_ADDRESS,
+                    pointer: true,
+                },
+                BasicWindow {
+                    open: false,
+                    title: "Player control",
+                    type_name: "PlayerControl",
+                    address: PLAYER_CONTROL_ADDRESS,
+                    pointer: true,
+                },
+                BasicWindow {
+                    open: false,
+                    title: "Player manager",
+                    type_name: "PlayerManager",
+                    address: PLAYER_MANAGER_ADDRESS,
+                    pointer: true,
+                },
+                BasicWindow {
+                    open: false,
+                    title: "Item model loader",
+                    type_name: "ItemModelLoader",
+                    address: ITEM_MODEL_LOADER_ADDRESS,
+                    pointer: true,
+                },
+                BasicWindow {
+                    open: false,
+                    title: "Player control data",
+                    type_name: "PlayerControlData",
+                    address: PLAYER_CONTROL_DATA_ADDRESS,
+                    pointer: true,
+                },
+                BasicWindow {
+                    open: false,
+                    title: "Link state",
+                    type_name: "LinkStateBase",
+                    address: LINK_STATE_ADDRESS,
+                    pointer: true,
+                },
+            ],
+        }
     }
 }
 
@@ -48,6 +157,9 @@ impl super::View for View {
                     ui.toggle_value(&mut self.windows.player.open, "Player");
                     ui.toggle_value(&mut self.windows.actor_manager.open, "Actor manager");
                     ui.toggle_value(&mut self.windows.actors.open, "Actors");
+                    for window in &mut self.windows.basic_windows {
+                        ui.toggle_value(&mut window.open, window.title);
+                    }
                 },
             );
         });
@@ -82,6 +194,10 @@ impl super::View for View {
             self.windows.actor_list.remove(&actor);
         }
 
+        for window in &mut self.windows.basic_windows {
+            window.render(ctx, types, &mut state);
+        }
+
         Ok(())
     }
 
@@ -90,6 +206,40 @@ impl super::View for View {
         self.client.join_update_thread();
         Ok(())
     }
+}
+
+fn read_object<'a>(
+    types: &'a type_crawler::Types,
+    state: &mut State,
+    type_name: &str,
+    address: u32,
+) -> Result<TypeInstance<'a>, String> {
+    let Some(ty) = types.get(type_name) else {
+        return Err(format!("{} struct not found", type_name));
+    };
+
+    state.request(address, ty.size(types));
+    let Some(game_data) = state.get_data(address).map(|d| d.to_vec()) else {
+        return Err(format!("{} data not found", type_name));
+    };
+
+    let instance = TypeInstance::new(ty, address, game_data);
+    Ok(instance)
+}
+
+fn read_pointer_object<'a>(
+    types: &'a type_crawler::Types,
+    state: &mut State,
+    type_name: &str,
+    address: u32,
+) -> Result<TypeInstance<'a>, String> {
+    state.request(address, 4);
+    let Some(data) = state.get_data(address) else {
+        return Err(format!("{} pointer data not found", type_name));
+    };
+    let ptr = u32::from_le_bytes(data.try_into().unwrap_or([0; 4]));
+
+    read_object(types, state, type_name, ptr)
 }
 
 #[derive(Default)]
@@ -102,21 +252,14 @@ impl PlayerWindow {
         let mut open = self.open;
         egui::Window::new("Player").open(&mut open).resizable(false).show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                let Some(vec3p_type) = types.get("Vec3p") else {
-                    ui.label("Vec3p struct not found");
-                    return;
+                let player_pos = match read_object(types, state, "Vec3p", PLAYER_POS_ADDRESS) {
+                    Ok(instance) => instance,
+                    Err(err) => {
+                        ui.label(err);
+                        return;
+                    }
                 };
-
-                state.request(PLAYER_POS_ADDRESS, vec3p_type.size(types));
-
-                let Some(player_data) = state.get_data(PLAYER_POS_ADDRESS).map(|d| d.to_vec())
-                else {
-                    ui.label("Player data not found");
-                    return;
-                };
-
-                let instance = TypeInstance::new(vec3p_type, PLAYER_POS_ADDRESS, &player_data);
-                vec3p_type.as_data_widget(ui, types, instance).render_compound(ui, types, state);
+                player_pos.as_data_widget(ui, types).render_compound(ui, types, state);
             });
         });
         self.open = open;
@@ -133,7 +276,12 @@ impl ActorManagerWindow {
         let mut open = self.open;
         egui::Window::new("Actor manager").open(&mut open).resizable(true).show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                let instance = match get_actor_manager(types, state) {
+                let instance = match read_pointer_object(
+                    types,
+                    state,
+                    "ActorManager",
+                    ACTOR_MANAGER_ADDRESS,
+                ) {
                     Ok(data) => data,
                     Err(err) => {
                         ui.label(err);
@@ -146,29 +294,6 @@ impl ActorManagerWindow {
         });
         self.open = open;
     }
-}
-
-fn get_actor_manager<'a>(
-    types: &'a type_crawler::Types,
-    state: &mut State,
-) -> Result<TypeInstance<'a>, String> {
-    state.request(ACTOR_MANAGER_ADDRESS, 0x4);
-    let actor_manager_data = state.get_data(ACTOR_MANAGER_ADDRESS).unwrap_or(&[0; 0x4]);
-    let actor_manager_ptr = u32::from_le_bytes(actor_manager_data.try_into().unwrap_or([0; 4]));
-    if actor_manager_ptr == 0 {
-        return Err("Actor manager not initialized".into());
-    }
-
-    let Some(actor_manager_type) = types.get("ActorManager") else {
-        return Err("ActorManager struct not found".into());
-    };
-
-    state.request(actor_manager_ptr, actor_manager_type.size(types));
-    let Some(actor_manager_data) = state.get_data(actor_manager_ptr).map(|d| d.to_vec()) else {
-        return Err("ActorManager data not found".into());
-    };
-    let instance = TypeInstance::new(actor_manager_type, actor_manager_ptr, actor_manager_data);
-    Ok(instance)
 }
 
 fn get_actor_table(
@@ -205,13 +330,14 @@ impl ActorsWindow {
     ) {
         let mut open = self.open;
         egui::Window::new("Actors").open(&mut open).resizable(true).show(ctx, |ui| {
-            let actor_manager = match get_actor_manager(types, state) {
-                Ok(data) => data,
-                Err(err) => {
-                    ui.label(err);
-                    return;
-                }
-            };
+            let actor_manager =
+                match read_pointer_object(types, state, "ActorManager", ACTOR_MANAGER_ADDRESS) {
+                    Ok(data) => data,
+                    Err(err) => {
+                        ui.label(err);
+                        return;
+                    }
+                };
 
             let actors_table = match get_actor_table(types, state, actor_manager) {
                 Ok(data) => data,
@@ -291,7 +417,9 @@ impl ActorWindow {
     ) -> bool {
         let actor_types = config.entry("actors").or_insert_with(|| toml::Table::new().into());
 
-        let Ok(actor_manager) = get_actor_manager(types, state) else {
+        let Ok(actor_manager) =
+            read_pointer_object(types, state, "ActorManager", ACTOR_MANAGER_ADDRESS)
+        else {
             return true;
         };
         let Ok(actor_table) = get_actor_table(types, state, actor_manager) else {
@@ -344,5 +472,39 @@ impl ActorWindow {
                 });
             });
         open
+    }
+}
+
+#[derive(Default)]
+struct BasicWindow {
+    open: bool,
+    title: &'static str,
+    type_name: &'static str,
+    address: u32,
+    pointer: bool,
+}
+
+impl BasicWindow {
+    fn render(&mut self, ctx: &egui::Context, types: &type_crawler::Types, state: &mut State) {
+        let mut open = self.open;
+        egui::Window::new(self.title).open(&mut open).resizable(true).show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let object = if self.pointer {
+                    read_pointer_object(types, state, self.type_name, self.address)
+                } else {
+                    read_object(types, state, self.type_name, self.address)
+                };
+
+                let instance = match object {
+                    Ok(instance) => instance,
+                    Err(err) => {
+                        ui.label(err);
+                        return;
+                    }
+                };
+                instance.as_data_widget(ui, types).render_compound(ui, types, state);
+            });
+        });
+        self.open = open;
     }
 }
