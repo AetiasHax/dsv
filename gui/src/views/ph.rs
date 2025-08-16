@@ -7,8 +7,8 @@ use eframe::egui::{self};
 use crate::{
     client::{Client, Command},
     config::Config,
-    ui::{self, type_decl::AsDataWidget},
-    util::read::{ReadField, ReadIntValue, TypeInstance},
+    ui::type_decl::AsDataWidget,
+    util::read::TypeInstance,
 };
 
 const PLAYER_POS_ADDRESS: u32 = 0x027e0f94;
@@ -57,7 +57,7 @@ impl super::View for View {
     fn render_central_panel(
         &mut self,
         ctx: &egui::Context,
-        ui: &mut egui::Ui,
+        _ui: &mut egui::Ui,
         types: &type_crawler::Types,
         config: &mut Config,
     ) -> Result<()> {
@@ -115,7 +115,7 @@ impl PlayerWindow {
                     return;
                 };
 
-                let instance = TypeInstance::new(PLAYER_POS_ADDRESS, &player_data);
+                let instance = TypeInstance::new(vec3p_type, PLAYER_POS_ADDRESS, &player_data);
                 vec3p_type.as_data_widget(ui, types, instance).render_compound(ui, types, state);
             });
         });
@@ -133,7 +133,7 @@ impl ActorManagerWindow {
         let mut open = self.open;
         egui::Window::new("Actor manager").open(&mut open).resizable(true).show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                let (actor_manager_type, instance) = match get_actor_manager_data(types, state) {
+                let instance = match get_actor_manager(types, state) {
                     Ok(data) => data,
                     Err(err) => {
                         ui.label(err);
@@ -141,19 +141,17 @@ impl ActorManagerWindow {
                     }
                 };
 
-                actor_manager_type
-                    .as_data_widget(ui, types, instance)
-                    .render_compound(ui, types, state);
+                instance.as_data_widget(ui, types).render_compound(ui, types, state);
             });
         });
         self.open = open;
     }
 }
 
-fn get_actor_manager_data<'a>(
+fn get_actor_manager<'a>(
     types: &'a type_crawler::Types,
     state: &mut State,
-) -> Result<(&'a type_crawler::StructDecl, TypeInstance<'a>), String> {
+) -> Result<TypeInstance<'a>, String> {
     state.request(ACTOR_MANAGER_ADDRESS, 0x4);
     let actor_manager_data = state.get_data(ACTOR_MANAGER_ADDRESS).unwrap_or(&[0; 0x4]);
     let actor_manager_ptr = u32::from_le_bytes(actor_manager_data.try_into().unwrap_or([0; 4]));
@@ -164,40 +162,28 @@ fn get_actor_manager_data<'a>(
     let Some(actor_manager_type) = types.get("ActorManager") else {
         return Err("ActorManager struct not found".into());
     };
-    let type_crawler::TypeDecl::Struct(actor_manager_struct) = actor_manager_type else {
-        return Err("ActorManager is not a struct".into());
-    };
 
     state.request(actor_manager_ptr, actor_manager_type.size(types));
     let Some(actor_manager_data) = state.get_data(actor_manager_ptr).map(|d| d.to_vec()) else {
         return Err("ActorManager data not found".into());
     };
-    let instance = TypeInstance::new(actor_manager_ptr, actor_manager_data);
-    Ok((actor_manager_struct, instance))
+    let instance = TypeInstance::new(actor_manager_type, actor_manager_ptr, actor_manager_data);
+    Ok(instance)
 }
 
 fn get_actor_table(
     types: &type_crawler::Types,
     state: &mut State,
-    actor_manager_struct: &type_crawler::StructDecl,
-    instance: TypeInstance<'_>,
+    actor_manager: TypeInstance<'_>,
 ) -> Result<Vec<u32>, String> {
-    let Some(max_actors_field) = actor_manager_struct.get_field("mMaxActors") else {
+    let Some(max_actors) = actor_manager.read_int_field::<u32>(types, "mMaxActors") else {
         return Err("ActorManager does not have mMaxActors field".into());
     };
-    let (max_actor_count_type, max_actor_count) = max_actors_field.read_field(types, &instance);
-    let Some(max_actor_count) = max_actor_count_type.read_int_value(types, &max_actor_count) else {
-        return Err("mMaxActors is not an integer".into());
-    };
-
-    let Some(actor_table_field) = actor_manager_struct.get_field("mActorTable") else {
+    let Some(actor_table) = actor_manager.read_int_field::<u32>(types, "mActorTable") else {
         return Err("ActorManager does not have mActorTable field".into());
     };
-    let (_, actor_table) = actor_table_field.read_field(types, &instance);
-
-    let actor_table_address = u32::from_le_bytes(actor_table.get(4).try_into().unwrap_or([0; 4]));
-    state.request(actor_table_address, max_actor_count as usize * 4);
-    let Some(actors_data) = state.get_data(actor_table_address) else {
+    state.request(actor_table, max_actors as usize * 4);
+    let Some(actors_data) = state.get_data(actor_table) else {
         return Err("Actors data not found".into());
     };
     let actors_data: Vec<u32> = bytemuck::cast_slice(actors_data).to_vec();
@@ -219,7 +205,7 @@ impl ActorsWindow {
     ) {
         let mut open = self.open;
         egui::Window::new("Actors").open(&mut open).resizable(true).show(ctx, |ui| {
-            let (actor_manager_struct, instance) = match get_actor_manager_data(types, state) {
+            let actor_manager = match get_actor_manager(types, state) {
                 Ok(data) => data,
                 Err(err) => {
                     ui.label(err);
@@ -227,7 +213,7 @@ impl ActorsWindow {
                 }
             };
 
-            let actors_table = match get_actor_table(types, state, actor_manager_struct, instance) {
+            let actors_table = match get_actor_table(types, state, actor_manager) {
                 Ok(data) => data,
                 Err(err) => {
                     ui.label(err);
@@ -235,24 +221,8 @@ impl ActorsWindow {
                 }
             };
 
-            let Some(type_crawler::TypeDecl::Struct(actor_type)) = types.get("Actor") else {
+            let Some(actor_type) = types.get("Actor") else {
                 ui.label("Actor struct not found");
-                return;
-            };
-            let Some(actor_type_id_field) = actor_type.get_field("mType") else {
-                ui.label("Actor does not have mType field");
-                return;
-            };
-            let Some(actor_ref_field) = actor_type.get_field("mRef") else {
-                ui.label("Actor does not have mRef field");
-                return;
-            };
-            let Some(actor_ref_struct) = actor_ref_field.kind().as_struct(types) else {
-                ui.label("ActorRef field is not a struct");
-                return;
-            };
-            let Some(actor_ref_id_field) = actor_ref_struct.get_field("id") else {
-                ui.label("ActorRef does not have id field");
                 return;
             };
 
@@ -261,35 +231,35 @@ impl ActorsWindow {
                     if actor_ptr == 0 {
                         continue;
                     }
-                    state.request(actor_ptr, actor_type.size());
+                    state.request(actor_ptr, actor_type.size(types));
                     let Some(actor_data) = state.get_data(actor_ptr) else {
                         ui.label(format!("Failed to read actor at {actor_ptr:#x}"));
                         continue;
                     };
-                    let actor_instance = TypeInstance::new(actor_ptr, actor_data);
-                    let (_, actor_type_id) = actor_type_id_field.read_field(types, &actor_instance);
-
-                    let mut actor_type_id_bytes = [0u8; 4];
-                    actor_type_id_bytes.copy_from_slice(actor_type_id.get(4));
-                    actor_type_id_bytes.reverse();
-                    let Ok(actor_type_id) = str::from_utf8(&actor_type_id_bytes) else {
-                        ui.label(format!("Invalid actor type ID at {actor_ptr:#x}"));
+                    let actor = TypeInstance::new(actor_type, actor_ptr, actor_data);
+                    let Some(actor_type_id) = actor.read_int_field::<u32>(types, "mType") else {
+                        ui.label("Actor does not have mType field".to_string());
+                        continue;
+                    };
+                    let actor_type_bytes = actor_type_id.to_be_bytes();
+                    let Ok(actor_type_id) = str::from_utf8(&actor_type_bytes) else {
+                        ui.label("Invalid actor type ID".to_string());
                         continue;
                     };
 
-                    let (_, actor_ref) = actor_ref_field.read_field(types, &actor_instance);
-                    let (actor_ref_id_type, actor_ref_id) =
-                        actor_ref_id_field.read_field(types, &actor_ref);
-                    let Some(actor_ref_id) = actor_ref_id_type.read_int_value(types, &actor_ref_id)
-                    else {
-                        ui.label(format!("Invalid actor ref ID at {actor_ptr:#x}"));
+                    let Some(actor_ref) = actor.read_field(types, "mRef") else {
+                        ui.label("Actor does not have mRef field".to_string());
+                        continue;
+                    };
+                    let Some(actor_id) = actor_ref.read_int_field::<i32>(types, "id") else {
+                        ui.label(format!("Actor ref does not have id field {:#?}", actor_ref.ty()));
                         continue;
                     };
 
-                    let actor_ref = ActorWindow { id: actor_ref_id as u32, index: index as u32 };
+                    let actor_ref = ActorWindow { id: actor_id, index: index as i32 };
                     let mut checked = actor_list.contains(&actor_ref);
                     if ui
-                        .toggle_value(&mut checked, format!("{}: {}", actor_ref_id, actor_type_id))
+                        .toggle_value(&mut checked, format!("{}: {}", actor_id, actor_type_id))
                         .clicked()
                     {
                         if checked {
@@ -307,8 +277,8 @@ impl ActorsWindow {
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
 struct ActorWindow {
-    id: u32,
-    index: u32,
+    id: i32,
+    index: i32,
 }
 
 impl ActorWindow {
@@ -321,31 +291,58 @@ impl ActorWindow {
     ) -> bool {
         let actor_types = config.entry("actors").or_insert_with(|| toml::Table::new().into());
 
-        let Ok((actor_manager_struct, instance)) = get_actor_manager_data(types, state) else {
+        let Ok(actor_manager) = get_actor_manager(types, state) else {
             return true;
         };
-        let Ok(actors_table) = get_actor_table(types, state, actor_manager_struct, instance) else {
+        let Ok(actor_table) = get_actor_table(types, state, actor_manager) else {
             return true;
         };
 
-        let actor_ptr = actors_table.get(self.index as usize).copied().unwrap_or(0);
+        let actor_ptr = actor_table.get(self.index as usize).copied().unwrap_or(0);
         if actor_ptr == 0 {
             return false;
         }
+        let Some(actor_type) = types.get("Actor") else {
+            return false;
+        };
+        state.request(actor_ptr, actor_type.size(types));
+        let Some(actor_data) = state.get_data(actor_ptr) else {
+            // Actor data not received yet
+            return true;
+        };
 
-        // let actor_type_name =
-        //     actor_types.get(actor_type_id).and_then(|v| v.as_str()).unwrap_or("Actor");
-        // let Some(actor_type) = types.get(actor_type_name) else {
-        //     ui.label(format!("Actor type '{actor_type_name}' not found"));
-        //     continue;
-        // };
+        let actor = TypeInstance::new(actor_type, actor_ptr, actor_data);
+        let Some(actor_type_id) = actor.read_int_field::<u32>(types, "mType") else {
+            return false;
+        };
+        let actor_type_bytes = actor_type_id.to_be_bytes();
+        let Ok(actor_type_id) = str::from_utf8(&actor_type_bytes) else {
+            return false;
+        };
+
+        let actor_type_name =
+            actor_types.get(actor_type_id).and_then(|v| v.as_str()).unwrap_or("Actor");
 
         let mut open = true;
-        egui::Window::new("Actor")
+        egui::Window::new(format!("{actor_type_name} ({actor_type_id})"))
             .id(egui::Id::new(actor_ptr))
             .open(&mut open)
             .resizable(true)
-            .show(ctx, |ui| {});
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    let Some(actor_type) = types.get(actor_type_name) else {
+                        ui.label(format!("Actor type '{actor_type_name}' not found"));
+                        return;
+                    };
+                    state.request(actor_ptr, actor_type.size(types));
+                    let Some(actor_data) = state.get_data(actor_ptr) else {
+                        ui.label(format!("Failed to read actor at {actor_ptr:#x}"));
+                        return;
+                    };
+                    let actor = TypeInstance::new(actor_type, actor_ptr, actor_data.to_vec());
+                    actor_type.as_data_widget(ui, types, actor).render_compound(ui, types, state);
+                });
+            });
         open
     }
 }

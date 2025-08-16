@@ -20,68 +20,68 @@ pub trait DataWidget {
 
 pub trait AsDataWidget {
     fn as_data_widget<'a>(
-        &self,
+        &'a self,
         ui: &mut egui::Ui,
-        types: &Types,
+        types: &'a Types,
         instance: TypeInstance<'a>,
     ) -> Box<dyn DataWidget + 'a>;
 }
 
 impl AsDataWidget for type_crawler::TypeKind {
     fn as_data_widget<'a>(
-        &self,
+        &'a self,
         ui: &mut egui::Ui,
-        types: &Types,
+        types: &'a Types,
         instance: TypeInstance<'a>,
     ) -> Box<dyn DataWidget + 'a> {
         match self {
             type_crawler::TypeKind::USize { .. } => {
-                let value = u32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
+                let value = u32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
                 Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::SSize { .. } => {
-                let value = i32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
+                let value = i32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
                 Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::U64 => {
-                let value = u64::from_le_bytes(instance.get(8).try_into().unwrap_or([0; 8]));
+                let value = u64::from_le_bytes(instance.data().try_into().unwrap_or([0; 8]));
                 Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::U32 => {
-                let value = u32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
+                let value = u32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
                 Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::U16 => {
-                let value = u16::from_le_bytes(instance.get(2).try_into().unwrap_or([0; 2]));
+                let value = u16::from_le_bytes(instance.data().try_into().unwrap_or([0; 2]));
                 Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::U8 => {
-                let value = instance.get(1).first().copied().unwrap_or(0);
+                let value = instance.data().first().copied().unwrap_or(0);
                 Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::S64 => {
-                let value = i64::from_le_bytes(instance.get(8).try_into().unwrap_or([0; 8]));
+                let value = i64::from_le_bytes(instance.data().try_into().unwrap_or([0; 8]));
                 Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::S32 => {
-                let value = i32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
+                let value = i32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
                 Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::S16 => {
-                let value = i16::from_le_bytes(instance.get(2).try_into().unwrap_or([0; 2]));
+                let value = i16::from_le_bytes(instance.data().try_into().unwrap_or([0; 2]));
                 Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::S8 => {
-                let value = instance.get(1).first().copied().unwrap_or(0) as i8;
+                let value = instance.data().first().copied().unwrap_or(0) as i8;
                 Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::Bool => {
-                let value = instance.get(1).first().copied().unwrap_or(0);
+                let value = instance.data().first().copied().unwrap_or(0);
                 Box::new(BoolWidget { value })
             }
             type_crawler::TypeKind::Void => Box::new(VoidWidget),
             type_crawler::TypeKind::Pointer { pointee_type, .. } => {
-                let address = u32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
+                let address = u32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
                 Box::new(PointerWidget::new(ui, *pointee_type.clone(), address))
             }
             type_crawler::TypeKind::Array { element_type, size: Some(size) } => {
@@ -91,7 +91,7 @@ impl AsDataWidget for type_crawler::TypeKind {
                 Box::new(PointerWidget::new(ui, *element_type.clone(), instance.address()))
             }
             type_crawler::TypeKind::Function { .. } => {
-                let value = u32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
+                let value = u32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
                 Box::new(IntegerWidget::new(ui, self, value))
             }
             type_crawler::TypeKind::Struct(struct_decl) => {
@@ -100,9 +100,13 @@ impl AsDataWidget for type_crawler::TypeKind {
             type_crawler::TypeKind::Union(union_decl) => {
                 union_decl.as_data_widget(ui, types, instance)
             }
+            type_crawler::TypeKind::Enum(enum_decl) => {
+                enum_decl.as_data_widget(ui, types, instance)
+            }
+            type_crawler::TypeKind::Typedef(typedef) => typedef.as_data_widget(ui, types, instance),
             type_crawler::TypeKind::Named(name) => match name.as_str() {
                 "q20" => {
-                    let value = i32::from_le_bytes(instance.get(4).try_into().unwrap_or([0; 4]));
+                    let value = i32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
                     Box::new(Fx32Widget::new(ui, value))
                 }
                 _ => {
@@ -227,11 +231,10 @@ impl<'a> DataWidget for ArrayWidget<'a> {
 
     fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         ui.indent("array_compound", |ui| {
-            let element_size = self.element_type.size(types);
             let stride = self.element_type.stride(types);
             for i in 0..self.size {
                 let offset = i * stride;
-                let field_instance = self.instance.slice(offset, element_size);
+                let field_instance = self.instance.slice(types, &self.element_type, offset);
 
                 ui.push_id(i, |ui| {
                     let mut widget = self.element_type.as_data_widget(ui, types, field_instance);
@@ -275,6 +278,10 @@ impl DataWidget for PointerWidget {
             egui::TextEdit::singleline(&mut str).desired_width(70.0).show(ui);
             return;
         }
+        if self.address == 0 {
+            ui.label("NULL");
+            return;
+        }
         ui.horizontal(|ui| {
             let mut open = self.is_open(ui);
             if ui.selectable_label(open, "Open").clicked() {
@@ -297,14 +304,13 @@ impl DataWidget for PointerWidget {
         if stride == 0 {
             return;
         }
-        let element_size = self.pointee_type.size(types);
         let size = stride * list_length;
         state.request(self.address, size);
         let Some(data) = state.get_data(self.address).map(|d| d.to_vec()) else {
             ui.label("Pointer data not found");
             return;
         };
-        let instance = TypeInstance::new(self.address, &data);
+        let instance = TypeInstance::new(&self.pointee_type, self.address, &data);
 
         if list_length == 1 {
             self.pointee_type.as_data_widget(ui, types, instance).render_compound(ui, types, state);
@@ -314,7 +320,7 @@ impl DataWidget for PointerWidget {
             for i in 0..list_length {
                 ui.push_id(i, |ui| {
                     let offset = i * stride;
-                    let field_instance = instance.slice(offset, element_size);
+                    let field_instance = instance.slice(types, &self.pointee_type, offset);
 
                     let mut widget = self.pointee_type.as_data_widget(ui, types, field_instance);
                     columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
@@ -395,81 +401,62 @@ impl DataWidget for Fx32Widget {
     }
 }
 
-impl AsDataWidget for type_crawler::TypeDecl {
-    fn as_data_widget<'a>(
-        &self,
-        ui: &mut egui::Ui,
-        types: &Types,
-        instance: TypeInstance<'a>,
-    ) -> Box<dyn DataWidget + 'a> {
-        match self {
-            type_crawler::TypeDecl::Typedef(typedef) => typedef.as_data_widget(ui, types, instance),
-            type_crawler::TypeDecl::Enum(enum_decl) => {
-                enum_decl.as_data_widget(ui, types, instance)
-            }
-            type_crawler::TypeDecl::Struct(struct_decl) => {
-                struct_decl.as_data_widget(ui, types, instance)
-            }
-            type_crawler::TypeDecl::Union(union_decl) => {
-                union_decl.as_data_widget(ui, types, instance)
-            }
-        }
-    }
-}
-
 impl AsDataWidget for type_crawler::Typedef {
     fn as_data_widget<'a>(
-        &self,
+        &'a self,
         ui: &mut egui::Ui,
-        types: &Types,
+        types: &'a Types,
         instance: TypeInstance<'a>,
     ) -> Box<dyn DataWidget + 'a> {
         self.underlying_type().as_data_widget(ui, types, instance)
     }
 }
 
-struct EnumWidget {
-    enum_decl: type_crawler::EnumDecl,
-    value: i64,
+struct EnumWidget<'a> {
+    enum_decl: &'a type_crawler::EnumDecl,
+    instance: TypeInstance<'a>,
 }
 
 impl AsDataWidget for type_crawler::EnumDecl {
-    fn as_data_widget(
-        &self,
+    fn as_data_widget<'a>(
+        &'a self,
         _ui: &mut egui::Ui,
         _types: &Types,
-        instance: TypeInstance,
-    ) -> Box<dyn DataWidget> {
-        let size = self.size();
-        let mut bytes = [0u8; 8];
-        bytes[0..size].copy_from_slice(instance.get(size));
-        let value = i64::from_le_bytes(bytes);
-        Box::new(EnumWidget { enum_decl: self.clone(), value })
+        instance: TypeInstance<'a>,
+    ) -> Box<dyn DataWidget + 'a> {
+        Box::new(EnumWidget { enum_decl: self, instance })
     }
 }
 
-impl DataWidget for EnumWidget {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, _state: &mut State) {
-        let current_constant = self.enum_decl.get(self.value);
+impl<'a> DataWidget for EnumWidget<'a> {
+    fn render_value(&mut self, ui: &mut egui::Ui, types: &Types, _state: &mut State) {
+        let size = self.enum_decl.size();
+        let mut bytes = [0u8; 8];
+        bytes[0..size].copy_from_slice(
+            self.instance
+                .slice(types, &type_crawler::TypeKind::Enum(self.enum_decl.clone()), 0)
+                .data(),
+        );
+        let mut value = i64::from_le_bytes(bytes);
+
+        let current_constant = self.enum_decl.get(value);
         let selected_text: Cow<str> = if let Some(constant) = current_constant {
             constant.name().into()
         } else {
-            format!("{:#x}", self.value).into()
+            format!("{:#x}", value).into()
         };
 
-        egui::ComboBox::new("enum_value", "Select enum value")
-            .selected_text(selected_text)
-            .show_ui(ui, |ui| {
-                for constant in self.enum_decl.constants() {
-                    ui.selectable_value(&mut self.value, constant.value(), constant.name());
-                }
-            });
+        egui::ComboBox::new("enum_value", "").selected_text(selected_text).show_ui(ui, |ui| {
+            for constant in self.enum_decl.constants() {
+                ui.selectable_value(&mut value, constant.value(), constant.name());
+            }
+        });
     }
 
     fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         ui.indent("enum_compound", |ui| {
             columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
-                ValueBadge::new_enum(&self.enum_decl).render(&mut columns[0]);
+                ValueBadge::new_enum(self.enum_decl).render(&mut columns[0]);
                 columns[1].label("Value");
                 self.render_value(&mut columns[2], types, state);
             });
@@ -491,6 +478,46 @@ impl<'a> StructWidget<'a> {
     ) -> Self {
         let open_id = ui.make_persistent_id("struct_open");
         Self { struct_decl, instance, open_id }
+    }
+
+    fn render_fields(&self, ui: &mut egui::Ui, types: &type_crawler::Types, state: &mut State) {
+        let fields = self.struct_decl.fields();
+        if fields.is_empty() {
+            return;
+        }
+        ui.heading(self.struct_decl.name().unwrap_or("Unnamed Struct"));
+        for field in fields {
+            let offset = field.offset_bytes();
+            let field_instance = self.instance.slice(types, field.kind(), offset);
+
+            ui.push_id(offset, |ui| {
+                let mut widget = field.kind().as_data_widget(ui, types, field_instance);
+                columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
+                    ValueBadge::new(types, field.kind()).render(&mut columns[0]);
+                    columns[1].label(field.name().unwrap_or(""));
+                    widget.render_value(&mut columns[2], types, state);
+                });
+                if widget.is_open(ui) {
+                    widget.render_compound(ui, types, state);
+                }
+            });
+        }
+    }
+
+    fn render_base_types_and_fields(&self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
+        for base_type in self.struct_decl.base_types() {
+            let Some(base_struct) = types.get(base_type).and_then(|ty| ty.as_struct(types)) else {
+                ui.label(format!("Base type '{base_type}' not found"));
+                continue;
+            };
+            Self {
+                struct_decl: base_struct.clone(),
+                instance: self.instance.clone(),
+                open_id: self.open_id,
+            }
+            .render_base_types_and_fields(ui, types, state);
+        }
+        self.render_fields(ui, types, state);
     }
 }
 
@@ -516,23 +543,7 @@ impl<'a> DataWidget for StructWidget<'a> {
 
     fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         ui.indent("struct_compound", |ui| {
-            for field in self.struct_decl.fields() {
-                let offset = field.offset_bytes();
-                let size = field.kind().size(types);
-                let field_instance = self.instance.slice(offset, size);
-
-                ui.push_id(offset, |ui| {
-                    let mut widget = field.kind().as_data_widget(ui, types, field_instance);
-                    columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
-                        ValueBadge::new(types, field.kind()).render(&mut columns[0]);
-                        columns[1].label(field.name().unwrap_or(""));
-                        widget.render_value(&mut columns[2], types, state);
-                    });
-                    if widget.is_open(ui) {
-                        widget.render_compound(ui, types, state);
-                    }
-                });
-            }
+            self.render_base_types_and_fields(ui, types, state);
         });
     }
 
@@ -581,8 +592,7 @@ impl<'a> DataWidget for UnionWidget<'a> {
     fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         ui.indent("union_compound", |ui| {
             for (i, field) in self.union_decl.fields().iter().enumerate() {
-                let size = field.kind().size(types);
-                let field_instance = self.instance.slice(0, size);
+                let field_instance = self.instance.slice(types, field.kind(), 0);
 
                 ui.push_id(i, |ui| {
                     let mut widget = field.kind().as_data_widget(ui, types, field_instance);
@@ -730,6 +740,8 @@ impl<'a> ValueBadge<'a> {
             },
             type_crawler::TypeKind::Struct(struct_decl) => Self::new_struct(struct_decl),
             type_crawler::TypeKind::Union(union_decl) => Self::new_union(union_decl),
+            type_crawler::TypeKind::Enum(enum_decl) => Self::new_enum(enum_decl),
+            type_crawler::TypeKind::Typedef(typedef) => Self::new(types, typedef.underlying_type()),
             type_crawler::TypeKind::Named(name) => match name.as_str() {
                 "q20" => ValueBadge {
                     text: "q20".into(),
@@ -738,7 +750,7 @@ impl<'a> ValueBadge<'a> {
                     color: "#ffffff",
                 },
                 _ => {
-                    let Some(type_decl) = types.get(name) else {
+                    let Some(ty) = types.get(name) else {
                         return ValueBadge {
                             text: "unknown".into(),
                             tooltip: None,
@@ -746,16 +758,7 @@ impl<'a> ValueBadge<'a> {
                             color: "#ffffff",
                         };
                     };
-                    match type_decl {
-                        type_crawler::TypeDecl::Typedef(typedef) => {
-                            Self::new(types, typedef.underlying_type())
-                        }
-                        type_crawler::TypeDecl::Enum(enum_decl) => Self::new_enum(enum_decl),
-                        type_crawler::TypeDecl::Struct(struct_decl) => {
-                            Self::new_struct(struct_decl)
-                        }
-                        type_crawler::TypeDecl::Union(union_decl) => Self::new_union(union_decl),
-                    }
+                    Self::new(types, ty)
                 }
             },
         }
