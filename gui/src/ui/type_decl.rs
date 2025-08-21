@@ -306,9 +306,15 @@ impl DataWidget for PointerWidget {
         }
         ui.horizontal(|ui| {
             let mut open = self.is_open(ui);
-            if ui.selectable_label(open, "Open").clicked() {
+            let open_label = ui.selectable_label(open, "Open");
+            if open_label.clicked() {
                 open = !open;
                 ui.ctx().data_mut(|data| data.insert_temp(self.open_id, open));
+            }
+            if open_label.hovered() {
+                egui::Tooltip::for_widget(&open_label).at_pointer().gap(12.0).show(|ui| {
+                    ui.label(format!("{:#x}", self.address));
+                });
             }
 
             let mut list_length =
