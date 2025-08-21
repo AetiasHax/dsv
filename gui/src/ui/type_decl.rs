@@ -476,16 +476,18 @@ impl AsDataWidget for type_crawler::EnumDecl {
 
 impl<'a> DataWidget for EnumWidget<'a> {
     fn render_value(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
+        let enum_type = type_crawler::TypeKind::Enum(self.enum_decl.clone());
+        let source = self.instance.slice(types, &enum_type, 0);
+
         let size = self.enum_decl.size();
         let mut bytes = [0u8; 8];
-        bytes[0..size].copy_from_slice(
-            self.instance
-                .slice(types, &type_crawler::TypeKind::Enum(self.enum_decl.clone()), 0)
-                .data(),
-        );
+        if source.data().len() >= size {
+            bytes[0..size].copy_from_slice(source.data());
+        }
+
         let mut value = i64::from_le_bytes(bytes);
 
-        let current_constant = self.enum_decl.get(value);
+        let current_constant = self.enum_decl.get_by_value(value);
         let selected_text: Cow<str> = if let Some(constant) = current_constant {
             constant.name().into()
         } else {
