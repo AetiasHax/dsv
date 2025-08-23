@@ -40,14 +40,7 @@ impl GdbClient {
         let response = self.stream.receive_packet()?;
         self.stream.send_ack()?;
         self.handle_error(&response)?;
-        if response.len() != buf.len() * 2 {
-            bail!("Expected {} bytes, got {}", buf.len() * 2, response.len());
-        }
-        for (i, chunk) in response.as_bytes().chunks(2).enumerate() {
-            let high = hex_char_to_byte(chunk[0] as char);
-            let low = hex_char_to_byte(chunk[1] as char);
-            buf[i] = (high << 4) | low;
-        }
+        Self::hex_decode(&response, buf)?;
         Ok(())
     }
 
@@ -78,10 +71,7 @@ impl GdbClient {
 
     pub fn write_slice(&mut self, address: u32, buf: &[u8]) -> Result<()> {
         let length = buf.len();
-        let mut data = String::with_capacity(length * 2);
-        for &byte in buf {
-            data.push_str(&format!("{:02x}", byte));
-        }
+        let data = Self::hex_encode(buf);
         self.stream.send_packet(&format!("M {address:x},{length:x}:{data}"))?;
         self.stream.receive_ack()?;
         let response = self.stream.receive_packet()?;
@@ -103,5 +93,48 @@ impl GdbClient {
         self.handle_error(&response)?;
         self.stream.send_ack()?;
         Ok(())
+    }
+
+    pub fn get_gamecode(&mut self) -> Result<String> {
+        let rcmd = Self::hex_encode(b"gamecode");
+        self.stream.send_packet(&format!("qRcmd,{}", rcmd))?;
+        self.stream.receive_ack()?;
+        let response = self.stream.receive_packet()?;
+        self.stream.send_ack()?;
+        self.handle_error(&response)?;
+        Self::hex_decode_string(&response)
+    }
+
+    fn hex_encode(data: &[u8]) -> String {
+        let mut encoded = String::with_capacity(data.len() * 2);
+        for &byte in data {
+            encoded.push_str(&format!("{:02x}", byte));
+        }
+        encoded
+    }
+
+    fn hex_decode(data: &str, buf: &mut [u8]) -> Result<()> {
+        if data.len() != buf.len() * 2 {
+            bail!("Expected {} bytes, got {}", buf.len() * 2, data.len());
+        }
+        for (i, chunk) in data.as_bytes().chunks(2).enumerate() {
+            let high = hex_char_to_byte(chunk[0] as char);
+            let low = hex_char_to_byte(chunk[1] as char);
+            buf[i] = (high << 4) | low;
+        }
+        Ok(())
+    }
+
+    fn hex_decode_string(data: &str) -> Result<String> {
+        if data.len() % 2 != 0 {
+            bail!("Hex string must have even length");
+        }
+        let mut bytes = Vec::with_capacity(data.len() / 2);
+        for chunk in data.as_bytes().chunks(2) {
+            let high = hex_char_to_byte(chunk[0] as char);
+            let low = hex_char_to_byte(chunk[1] as char);
+            bytes.push((high << 4) | low);
+        }
+        Ok(String::from_utf8(bytes)?)
     }
 }

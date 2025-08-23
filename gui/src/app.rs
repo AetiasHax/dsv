@@ -11,7 +11,7 @@ use eframe::egui::{self, Color32, Widget};
 use crate::{
     config::Config,
     tasks::load_types::{LoadTypesTask, LoadTypesTaskOptions},
-    views::{View, ph},
+    views::{View, ph, st},
 };
 
 pub struct DzvApp {
@@ -310,8 +310,16 @@ impl DzvApp {
         let mut gdb_client = GdbClient::new();
         gdb_client.connect(addr)?;
         gdb_client.continue_execution()?;
-        // TODO: Ask emulator which game is running
-        self.view = Some(Box::new(ph::View::new(gdb_client)));
+        let gamecode = gdb_client.get_gamecode()?;
+        let view: Box<dyn View> = match gamecode.as_str() {
+            "BKIJ" | "BKIP" | "BKIE" => Box::new(st::View::new(gdb_client)),
+            "AZEJ" | "AZEP" | "AZEE" => Box::new(ph::View::new(gdb_client)),
+            _ => {
+                gdb_client.disconnect()?;
+                return Err(anyhow::anyhow!("Unsupported game code: {}", gamecode));
+            }
+        };
+        self.view = Some(view);
         Ok(())
     }
 }
