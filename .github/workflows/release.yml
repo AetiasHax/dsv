@@ -45,18 +45,18 @@ jobs:
 
       - name: Cargo build
         run: |
-          cargo build --release --target ${{ matrix.target }}
+          cargo build --bin dsv-gui --release --target ${{ matrix.target }}
 
       - name: Move target (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          Move-Item -Path "target/${{ matrix.target }}/release/dsv.exe" -Destination "${{ matrix.file }}"
+          Move-Item -Path "target/${{ matrix.target }}/release/dsv-gui.exe" -Destination "${{ matrix.file }}"
 
       - name: Move target (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          mv target/${{ matrix.target }}/release/dsv ${{ matrix.file }}
+          mv target/${{ matrix.target }}/release/dsv-gui ${{ matrix.file }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
