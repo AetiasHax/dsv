@@ -5,7 +5,7 @@ use eframe::egui::{self};
 use crate::{
     client::{Client, Command},
     config::Config,
-    views::read_pointer_object,
+    views::{read_object, read_pointer_object},
 };
 
 const ACTOR_MANAGER_ADDRESS: u32 = 0x027e0ce4;
@@ -17,6 +17,7 @@ pub struct View {
 
 struct Windows {
     actor_manager: ActorManagerWindow,
+    basic_windows: Vec<BasicWindow>,
 }
 
 impl View {
@@ -27,7 +28,18 @@ impl View {
 
 impl Default for Windows {
     fn default() -> Self {
-        Self { actor_manager: ActorManagerWindow::default() }
+        Self {
+            actor_manager: ActorManagerWindow::default(),
+            basic_windows: vec![
+                // BasicWindow {
+                //     open: false,
+                //     title: "Item manager",
+                //     type_name: "ItemManager",
+                //     address: ITEM_MANAGER_ADDRESS,
+                //     pointer: true,
+                // }
+            ],
+        }
     }
 }
 
@@ -44,6 +56,9 @@ impl super::View for View {
                 egui::Layout::top_down(egui::Align::LEFT).with_cross_justify(true),
                 |ui| {
                     ui.toggle_value(&mut self.windows.actor_manager.open, "Actor manager");
+                    for window in &mut self.windows.basic_windows {
+                        ui.toggle_value(&mut window.open, window.title);
+                    }
                 },
             );
         });
@@ -65,6 +80,10 @@ impl super::View for View {
             .ok_or_else(|| anyhow::anyhow!("Failed to get 'st' config as a table"))?;
 
         self.windows.actor_manager.render(ctx, types, &mut state);
+
+        for window in &mut self.windows.basic_windows {
+            window.render(ctx, types, &mut state);
+        }
 
         Ok(())
     }
@@ -99,6 +118,40 @@ impl ActorManagerWindow {
                     }
                 };
 
+                instance.as_data_widget(ui, types).render_compound(ui, types, state);
+            });
+        });
+        self.open = open;
+    }
+}
+
+#[derive(Default)]
+struct BasicWindow {
+    open: bool,
+    title: &'static str,
+    type_name: &'static str,
+    address: u32,
+    pointer: bool,
+}
+
+impl BasicWindow {
+    fn render(&mut self, ctx: &egui::Context, types: &type_crawler::Types, state: &mut State) {
+        let mut open = self.open;
+        egui::Window::new(self.title).open(&mut open).resizable(true).show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let object = if self.pointer {
+                    read_pointer_object(types, state, self.type_name, self.address)
+                } else {
+                    read_object(types, state, self.type_name, self.address)
+                };
+
+                let instance = match object {
+                    Ok(instance) => instance,
+                    Err(err) => {
+                        ui.label(err);
+                        return;
+                    }
+                };
                 instance.as_data_widget(ui, types).render_compound(ui, types, state);
             });
         });
