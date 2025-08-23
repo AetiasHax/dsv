@@ -2,7 +2,7 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddrV4};
 
     use anyhow::Result;
-    use dzv_core::gdb::client::GdbClient;
+    use dsv_core::gdb::client::GdbClient;
 
     #[test]
     fn test_read_memory() -> Result<()> {

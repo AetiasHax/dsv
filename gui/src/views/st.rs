@@ -1,5 +1,5 @@
 use anyhow::Result;
-use dzv_core::{gdb::client::GdbClient, state::State};
+use dsv_core::{gdb::client::GdbClient, state::State};
 use eframe::egui::{self};
 
 use crate::{

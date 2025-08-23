@@ -1,6 +1,6 @@
 use std::{borrow::Cow, ops::Range};
 
-use dzv_core::state::State;
+use dsv_core::state::State;
 use eframe::egui;
 
 use crate::{

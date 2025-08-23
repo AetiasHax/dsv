@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use dzv_core::{gdb::client::GdbClient, state::State};
+use dsv_core::{gdb::client::GdbClient, state::State};
 
 pub struct Client {
     running: Arc<Mutex<bool>>,

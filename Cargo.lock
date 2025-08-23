@@ -859,7 +859,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
-name = "dzv-core"
+name = "dsv-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -869,11 +869,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "dzv-gui"
+name = "dsv-gui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dzv-core",
+ "dsv-core",
  "eframe",
  "egui_extras",
  "env_logger",

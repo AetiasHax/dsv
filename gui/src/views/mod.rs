@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use anyhow::Result;
-use dzv_core::state::State;
+use dsv_core::state::State;
 use eframe::egui;
 
 use crate::{

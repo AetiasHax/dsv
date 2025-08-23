@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use dzv_core::state::State;
+use dsv_core::state::State;
 use eframe::egui::{self, Widget};
 use type_crawler::Types;
 

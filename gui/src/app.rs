@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use dzv_core::gdb::client::GdbClient;
+use dsv_core::gdb::client::GdbClient;
 use eframe::egui::{self, Color32, Widget};
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
     views::{View, ph, st},
 };
 
-pub struct DzvApp {
+pub struct DsvApp {
     config_path: Option<PathBuf>,
     config: Config,
 
@@ -25,9 +25,9 @@ pub struct DzvApp {
     view: Option<Box<dyn View>>,
 }
 
-impl Default for DzvApp {
+impl Default for DsvApp {
     fn default() -> Self {
-        DzvApp {
+        DsvApp {
             config_path: None,
             config: Config::new(),
 
@@ -40,17 +40,17 @@ impl Default for DzvApp {
     }
 }
 
-impl eframe::App for DzvApp {
+impl eframe::App for DsvApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint();
 
-        egui::TopBottomPanel::top("dzv_top_panel")
+        egui::TopBottomPanel::top("dsv_top_panel")
             .frame(egui::Frame::new().inner_margin(4).fill(Color32::from_gray(20)))
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     if ui.button("Open").clicked() {
                         let file =
-                            rfd::FileDialog::new().add_filter("dzv project", &["toml"]).pick_file();
+                            rfd::FileDialog::new().add_filter("dsv project", &["toml"]).pick_file();
                         if let Some(file) = file {
                             self.load_config(file);
                         }
@@ -111,7 +111,7 @@ impl eframe::App for DzvApp {
                 });
             });
 
-        egui::TopBottomPanel::bottom("dzv_bottom_panel")
+        egui::TopBottomPanel::bottom("dsv_bottom_panel")
             .frame(egui::Frame::new().inner_margin(4).fill(Color32::from_gray(20)))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -128,7 +128,7 @@ impl eframe::App for DzvApp {
                 });
             });
 
-        egui::SidePanel::right("dzv_side_panel")
+        egui::SidePanel::right("dsv_side_panel")
             .frame(egui::Frame::new().inner_margin(4).fill(Color32::from_gray(20)))
             .show(ctx, |ui| {
                 if let Some(view) = &mut self.view {
@@ -155,7 +155,7 @@ impl eframe::App for DzvApp {
                     ui.separator();
                     let mut remove_index = None;
                     egui_extras::TableBuilder::new(ui)
-                        .id_salt("dzv_include_paths")
+                        .id_salt("dsv_include_paths")
                         .striped(true)
                         .column(egui_extras::Column::exact(220.0))
                         .column(egui_extras::Column::exact(50.0))
@@ -201,7 +201,7 @@ impl eframe::App for DzvApp {
                     ui.separator();
                     let mut remove_index = None;
                     egui_extras::TableBuilder::new(ui)
-                        .id_salt("dzv_ignore_paths")
+                        .id_salt("dsv_ignore_paths")
                         .striped(true)
                         .column(egui_extras::Column::exact(220.0))
                         .column(egui_extras::Column::exact(50.0))
@@ -246,7 +246,7 @@ impl eframe::App for DzvApp {
                     }
                     if ui.button("Save").clicked() {
                         let file =
-                            rfd::FileDialog::new().add_filter("dzv config", &["toml"]).save_file();
+                            rfd::FileDialog::new().add_filter("dsv config", &["toml"]).save_file();
                         if let Some(file) = file {
                             self.config_path = Some(file);
                             self.save_config();
@@ -272,7 +272,7 @@ impl eframe::App for DzvApp {
     }
 }
 
-impl DzvApp {
+impl DsvApp {
     fn save_config(&self) {
         let Some(path) = &self.config_path else {
             return;

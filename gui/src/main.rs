@@ -8,7 +8,7 @@ mod views;
 
 use eframe::egui;
 
-use crate::app::DzvApp;
+use crate::app::DsvApp;
 
 fn main() -> eframe::Result {
     env_logger::builder()
@@ -21,11 +21,11 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "dzv",
+        "dsv",
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok(Box::<DzvApp>::default())
+            Ok(Box::<DsvApp>::default())
         }),
     )
 }
