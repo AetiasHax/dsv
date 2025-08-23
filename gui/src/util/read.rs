@@ -1,7 +1,4 @@
-use std::{
-    borrow::Cow,
-    ops::{Range, Shr},
-};
+use std::{borrow::Cow, ops::Range};
 
 use dzv_core::state::State;
 use eframe::egui;
@@ -173,14 +170,23 @@ impl ReadIntValue for type_crawler::TypeKind {
             type_crawler::TypeKind::S8 => {
                 Some(instance.data().first().copied().unwrap_or(0) as i8 as i64)
             }
+            type_crawler::TypeKind::F32 => None,
+            type_crawler::TypeKind::F64 => None,
+            type_crawler::TypeKind::LongDouble { .. } => None,
+            type_crawler::TypeKind::Char16 => None,
+            type_crawler::TypeKind::Char32 => None,
+            type_crawler::TypeKind::WChar { .. } => None,
             type_crawler::TypeKind::Bool => None,
             type_crawler::TypeKind::Void => None,
-            type_crawler::TypeKind::Pointer { .. } => {
+            type_crawler::TypeKind::Reference { .. }
+            | type_crawler::TypeKind::Pointer { .. }
+            | type_crawler::TypeKind::MemberPointer { .. } => {
                 Some(u32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4])) as i64)
             }
             type_crawler::TypeKind::Array { .. } => None,
             type_crawler::TypeKind::Function { .. } => None,
             type_crawler::TypeKind::Struct(_) => None,
+            type_crawler::TypeKind::Class(_) => None,
             type_crawler::TypeKind::Union(_) => None,
             type_crawler::TypeKind::Enum(enum_decl) => match enum_decl.size() {
                 1 => Some(instance.data().first().copied().unwrap_or(0) as i8 as i64),

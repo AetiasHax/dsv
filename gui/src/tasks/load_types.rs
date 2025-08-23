@@ -53,7 +53,11 @@ impl LoadTypesTask {
         self.terminate_tx = Some(terminate_tx);
 
         self.thread_handle = Some(std::thread::spawn(move || {
-            let env = Env::new(EnvOptions { word_size: WordSize::Size32, short_enums: false });
+            let env = Env::new(EnvOptions {
+                word_size: WordSize::Size32,
+                short_enums: false,
+                signed_char: true,
+            });
             let mut crawler =
                 TypeCrawler::new(env).context("Failed to create type crawler").unwrap();
             include_paths.iter().for_each(|path| {
