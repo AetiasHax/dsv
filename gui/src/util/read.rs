@@ -1,23 +1,39 @@
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    ops::{Range, Shr},
+};
 
+use dzv_core::state::State;
 use eframe::egui;
 
-use crate::ui::type_decl::{AsDataWidget, DataWidget};
+use crate::{
+    ui::type_decl::{AsDataWidget, DataWidget},
+    util::vec::VecExt,
+};
 
 #[derive(Clone)]
 pub struct TypeInstance<'a> {
     ty: &'a type_crawler::TypeKind,
     address: u32,
+    bit_field_range: Option<Range<u8>>,
     data: Cow<'a, [u8]>,
 }
 
+pub struct TypeInstanceOptions<'a> {
+    pub ty: &'a type_crawler::TypeKind,
+    pub address: u32,
+    pub bit_field_range: Option<Range<u8>>,
+    pub data: Cow<'a, [u8]>,
+}
+
 impl<'a> TypeInstance<'a> {
-    pub fn new(
-        ty: &'a type_crawler::TypeKind,
-        address: u32,
-        data: impl Into<Cow<'a, [u8]>>,
-    ) -> Self {
-        Self { ty, address, data: data.into() }
+    pub fn new(options: TypeInstanceOptions<'a>) -> Self {
+        Self {
+            ty: options.ty,
+            address: options.address,
+            bit_field_range: options.bit_field_range,
+            data: options.data,
+        }
     }
 
     pub fn slice(
@@ -28,7 +44,16 @@ impl<'a> TypeInstance<'a> {
     ) -> Self {
         let start = offset.min(self.data.len());
         let end = (offset + new_type.size(types)).min(self.data.len());
-        Self::new(new_type, self.address + offset as u32, &self.data[start..end])
+        Self {
+            ty: new_type,
+            address: self.address + offset as u32,
+            bit_field_range: self.bit_field_range.clone(),
+            data: Cow::Borrowed(&self.data[start..end]),
+        }
+    }
+
+    pub fn set_bit_field_range(&mut self, range: Range<u8>) {
+        self.bit_field_range = Some(range);
     }
 
     pub fn data(&self) -> &[u8] {
@@ -64,7 +89,14 @@ impl<'a> TypeInstance<'a> {
     where
         T: Copy + TryFrom<i64>,
     {
-        self.ty.read_int_value(types, self).and_then(|value| T::try_from(value).ok())
+        let value = self.ty.read_int_value(types, self)?;
+        let value = if let Some(range) = &self.bit_field_range {
+            let mask = (1 << range.len()) - 1;
+            (value >> range.start) & mask
+        } else {
+            value
+        };
+        T::try_from(value).ok()
     }
 
     pub fn read_int_field<T>(&self, types: &type_crawler::Types, name: &str) -> Option<T>
@@ -84,6 +116,23 @@ impl<'a> TypeInstance<'a> {
 
     pub fn ty(&self) -> &'a type_crawler::TypeKind {
         self.ty
+    }
+
+    pub fn bit_field_range(&self) -> Option<&Range<u8>> {
+        self.bit_field_range.as_ref()
+    }
+
+    pub fn write(&self, state: &mut State, mut data: Vec<u8>) {
+        if let Some(range) = &self.bit_field_range {
+            data.shift_bits_left(range.start as usize);
+            debug_assert_eq!(data.len(), self.data.len());
+            data.assign_bits(0, &self.data, 0, range.start as usize).unwrap();
+            let end = range.end as usize;
+            data.assign_bits(end, &self.data, end, data.len() * 8 - end).unwrap();
+            state.request_write(self.address, data);
+        } else {
+            state.request_write(self.address, data);
+        }
     }
 }
 
