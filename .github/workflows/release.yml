@@ -35,7 +35,7 @@ jobs:
 
       - name: Install Clang
         uses: KyleMayes/install-llvm-action@v2
-        if: ${{ !matrix.os.startsWith('macos')}}
+        if: ${{ !startsWith(matrix.os, 'macos') }}
         with:
           version: 20.1.3
 
