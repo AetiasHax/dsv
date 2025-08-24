@@ -121,7 +121,7 @@ impl ActorManagerWindow {
                     }
                 };
 
-                instance.as_data_widget(ui, types).render_compound(ui, types, state);
+                instance.into_data_widget(ui, types).render_compound(ui, types, state);
             });
         });
         self.open = open;
@@ -155,7 +155,7 @@ impl BasicWindow {
                         return;
                     }
                 };
-                instance.as_data_widget(ui, types).render_compound(ui, types, state);
+                instance.into_data_widget(ui, types).render_compound(ui, types, state);
             });
         });
         self.open = open;
