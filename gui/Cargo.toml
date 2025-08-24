@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
+bitvec = "1.0"
 dsv-core = { path = "../core" }
 eframe = "0.32"
 egui_extras = "0.32"

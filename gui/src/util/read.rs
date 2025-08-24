@@ -1,11 +1,12 @@
 use std::{borrow::Cow, ops::Range};
 
+use bitvec::{order::Lsb0, slice::BitSlice, vec::BitVec};
 use dsv_core::state::State;
 use eframe::egui;
 
 use crate::{
     ui::type_decl::{AsDataWidget, DataWidget},
-    util::vec::VecExt,
+    util::bitvec::BitVecExt,
 };
 
 #[derive(Clone)]
@@ -38,23 +39,34 @@ impl<'a> TypeInstance<'a> {
         types: &type_crawler::Types,
         new_type: &'a type_crawler::TypeKind,
         offset: usize,
+        bit_field_range: Option<Range<u8>>,
     ) -> Self {
+        let size = if let Some(range) = &bit_field_range {
+            (range.end.div_ceil(8) - range.start / 8) as usize
+        } else {
+            new_type.size(types)
+        };
+
         let start = offset.min(self.data.len());
-        let end = (offset + new_type.size(types)).min(self.data.len());
+        let end = (offset + size).min(self.data.len());
         Self {
             ty: new_type,
             address: self.address + offset as u32,
-            bit_field_range: self.bit_field_range.clone(),
+            bit_field_range: bit_field_range.or(self.bit_field_range.clone()),
             data: Cow::Borrowed(&self.data[start..end]),
         }
     }
 
-    pub fn set_bit_field_range(&mut self, range: Range<u8>) {
-        self.bit_field_range = Some(range);
-    }
-
-    pub fn data(&self) -> &[u8] {
-        &self.data
+    pub fn data(&'a self) -> Cow<'a, [u8]> {
+        if let Some(range) = &self.bit_field_range {
+            let mut bitslice = BitVec::<u8, Lsb0>::from_slice(&self.data);
+            let start = range.start as usize;
+            bitslice.shift_left(start);
+            bitslice.truncate_remove(range.len());
+            bitslice.into_vec().into()
+        } else {
+            Cow::Borrowed(&self.data)
+        }
     }
 
     pub fn address(&self) -> u32 {
@@ -71,12 +83,19 @@ impl<'a> TypeInstance<'a> {
                 let field = struct_decl.get_field(types, name)?;
                 let ty = field.kind().expand_named(types)?;
                 let offset = field.offset_bytes();
-                Some(self.slice(types, ty, offset))
+                let bit_field_range = if let Some(width) = field.bit_field_width() {
+                    let start = (field.offset_bits() - offset * 8) as u8;
+                    Some(start..start + width)
+                } else {
+                    None
+                };
+                Some(self.slice(types, ty, offset, bit_field_range))
             }
             type_crawler::TypeKind::Union(union_decl) => {
                 let field = union_decl.get_field(name)?;
                 let ty = field.kind().expand_named(types)?;
-                Some(self.slice(types, ty, 0))
+                let bit_field_range = field.bit_field_width().map(|width| 0..width);
+                Some(self.slice(types, ty, 0, bit_field_range))
             }
             _ => None,
         }
@@ -87,12 +106,6 @@ impl<'a> TypeInstance<'a> {
         T: Copy + TryFrom<i64>,
     {
         let value = self.ty.read_int_value(types, self)?;
-        let value = if let Some(range) = &self.bit_field_range {
-            let mask = (1 << range.len()) - 1;
-            (value >> range.start) & mask
-        } else {
-            value
-        };
         T::try_from(value).ok()
     }
 
@@ -119,14 +132,22 @@ impl<'a> TypeInstance<'a> {
         self.bit_field_range.as_ref()
     }
 
-    pub fn write(&self, state: &mut State, mut data: Vec<u8>) {
+    pub fn write(&self, state: &mut State, data: Vec<u8>) {
         if let Some(range) = &self.bit_field_range {
-            data.shift_bits_left(range.start as usize);
-            debug_assert_eq!(data.len(), self.data.len());
-            data.assign_bits(0, &self.data, 0, range.start as usize).unwrap();
-            let end = range.end as usize;
-            data.assign_bits(end, &self.data, end, data.len() * 8 - end).unwrap();
-            state.request_write(self.address, data);
+            let mut data_bits: BitVec<u8, Lsb0> = BitVec::from_vec(data);
+            data_bits.truncate_remove(range.len());
+            let end_bit = range.len().next_multiple_of(8);
+            data_bits.resize(end_bit, false);
+            debug_assert_eq!(data_bits.len() / 8, self.data.len());
+            data_bits.shift_right(range.start as usize);
+
+            let current_bits = BitSlice::from_slice(&self.data);
+            data_bits[0..range.start as usize]
+                .copy_from_bitslice(&current_bits[0..range.start as usize]);
+            data_bits[range.end as usize..end_bit]
+                .copy_from_bitslice(&current_bits[range.end as usize..end_bit]);
+
+            state.request_write(self.address, data_bits.into_vec());
         } else {
             state.request_write(self.address, data);
         }
@@ -141,31 +162,31 @@ impl ReadIntValue for type_crawler::TypeKind {
     fn read_int_value(&self, types: &type_crawler::Types, instance: &TypeInstance) -> Option<i64> {
         match self {
             type_crawler::TypeKind::USize { .. } => {
-                Some(u32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4])) as i64)
+                Some(u32::from_le_bytes(instance.data()[..].try_into().unwrap_or([0; 4])) as i64)
             }
             type_crawler::TypeKind::SSize { .. } => {
-                Some(i32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4])) as i64)
+                Some(i32::from_le_bytes(instance.data()[..].try_into().unwrap_or([0; 4])) as i64)
             }
             type_crawler::TypeKind::U64 => {
-                Some(u64::from_le_bytes(instance.data().try_into().unwrap_or([0; 8])) as i64)
+                Some(u64::from_le_bytes(instance.data()[..].try_into().unwrap_or([0; 8])) as i64)
             }
             type_crawler::TypeKind::U32 => {
-                Some(u32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4])) as i64)
+                Some(u32::from_le_bytes(instance.data()[..].try_into().unwrap_or([0; 4])) as i64)
             }
             type_crawler::TypeKind::U16 => {
-                Some(u16::from_le_bytes(instance.data().try_into().unwrap_or([0; 2])) as i64)
+                Some(u16::from_le_bytes(instance.data()[..].try_into().unwrap_or([0; 2])) as i64)
             }
-            type_crawler::TypeKind::U8 => {
+            type_crawler::TypeKind::Bool | type_crawler::TypeKind::U8 => {
                 Some(instance.data().first().copied().unwrap_or(0) as i64)
             }
             type_crawler::TypeKind::S64 => {
-                Some(i64::from_le_bytes(instance.data().try_into().unwrap_or([0; 8])))
+                Some(i64::from_le_bytes(instance.data()[..].try_into().unwrap_or([0; 8])))
             }
             type_crawler::TypeKind::S32 => {
-                Some(i32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4])) as i64)
+                Some(i32::from_le_bytes(instance.data()[..].try_into().unwrap_or([0; 4])) as i64)
             }
             type_crawler::TypeKind::S16 => {
-                Some(i16::from_le_bytes(instance.data().try_into().unwrap_or([0; 2])) as i64)
+                Some(i16::from_le_bytes(instance.data()[..].try_into().unwrap_or([0; 2])) as i64)
             }
             type_crawler::TypeKind::S8 => {
                 Some(instance.data().first().copied().unwrap_or(0) as i8 as i64)
@@ -176,12 +197,11 @@ impl ReadIntValue for type_crawler::TypeKind {
             type_crawler::TypeKind::Char16 => None,
             type_crawler::TypeKind::Char32 => None,
             type_crawler::TypeKind::WChar { .. } => None,
-            type_crawler::TypeKind::Bool => None,
             type_crawler::TypeKind::Void => None,
             type_crawler::TypeKind::Reference { .. }
             | type_crawler::TypeKind::Pointer { .. }
             | type_crawler::TypeKind::MemberPointer { .. } => {
-                Some(u32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4])) as i64)
+                Some(u32::from_le_bytes(instance.data()[..].try_into().unwrap_or([0; 4])) as i64)
             }
             type_crawler::TypeKind::Array { .. } => None,
             type_crawler::TypeKind::Function { .. } => None,
@@ -190,9 +210,13 @@ impl ReadIntValue for type_crawler::TypeKind {
             type_crawler::TypeKind::Union(_) => None,
             type_crawler::TypeKind::Enum(enum_decl) => match enum_decl.size() {
                 1 => Some(instance.data().first().copied().unwrap_or(0) as i8 as i64),
-                2 => Some(i16::from_le_bytes(instance.data().try_into().unwrap_or([0; 2])) as i64),
-                4 => Some(i32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4])) as i64),
-                8 => Some(i64::from_le_bytes(instance.data().try_into().unwrap_or([0; 8]))),
+                2 => {
+                    Some(i16::from_le_bytes(instance.data()[..].try_into().unwrap_or([0; 2])) as i64)
+                }
+                4 => {
+                    Some(i32::from_le_bytes(instance.data()[..].try_into().unwrap_or([0; 4])) as i64)
+                }
+                8 => Some(i64::from_le_bytes(instance.data()[..].try_into().unwrap_or([0; 8]))),
                 _ => None,
             },
             type_crawler::TypeKind::Typedef(typedef) => {

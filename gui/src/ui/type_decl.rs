@@ -61,7 +61,7 @@ impl AsDataWidget for type_crawler::TypeKind {
             type_crawler::TypeKind::Reference { referenced_type: pointee_type, .. }
             | type_crawler::TypeKind::Pointer { pointee_type, .. }
             | type_crawler::TypeKind::MemberPointer { pointee_type, .. } => {
-                let address = u32::from_le_bytes(instance.data().try_into().unwrap_or([0; 4]));
+                let address = u32::from_le_bytes(instance.data()[..].try_into().unwrap_or([0; 4]));
                 Box::new(PointerWidget::new(ui, *pointee_type.clone(), address))
             }
             type_crawler::TypeKind::Array { element_type, size: Some(size) } => {
@@ -209,7 +209,8 @@ impl<'a> DataWidget for FloatWidget<'a> {
                 self.instance.write(state, value.to_le_bytes().to_vec());
             }
             if !text_edit.has_focus() {
-                let value = u32::from_le_bytes(self.instance.data().try_into().unwrap_or([0; 4]));
+                let value =
+                    u32::from_le_bytes(self.instance.data()[..].try_into().unwrap_or([0; 4]));
                 text = if show_hex {
                     format!("{:#x}", value)
                 } else {
@@ -241,21 +242,9 @@ struct BoolWidget<'a> {
     instance: TypeInstance<'a>,
 }
 
-impl<'a> BoolWidget<'a> {
-    fn value(&self) -> u8 {
-        let value = self.instance.data().first().copied().unwrap_or(0);
-        if let Some(range) = self.instance.bit_field_range() {
-            let mask = (1 << range.end) - 1;
-            (value >> range.start) & mask
-        } else {
-            value
-        }
-    }
-}
-
 impl<'a> DataWidget for BoolWidget<'a> {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, state: &mut State) {
-        let value = self.value();
+    fn render_value(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
+        let value = self.instance.as_int::<u8>(types).unwrap_or(0);
 
         let mut checked = value != 0;
         let text: Cow<str> = if value > 1 {
@@ -312,7 +301,7 @@ impl<'a> DataWidget for ArrayWidget<'a> {
             let stride = self.element_type.stride(types);
             for i in 0..self.size {
                 let offset = i * stride;
-                let field_instance = self.instance.slice(types, &self.element_type, offset);
+                let field_instance = self.instance.slice(types, &self.element_type, offset, None);
 
                 ui.push_id(i, |ui| {
                     let mut widget = self.element_type.as_data_widget(ui, types, field_instance);
@@ -410,7 +399,7 @@ impl DataWidget for PointerWidget {
             for i in 0..list_length {
                 ui.push_id(i, |ui| {
                     let offset = i * stride;
-                    let field_instance = instance.slice(types, &self.pointee_type, offset);
+                    let field_instance = instance.slice(types, &self.pointee_type, offset, None);
 
                     let mut widget = self.pointee_type.as_data_widget(ui, types, field_instance);
                     columns::fixed_columns(ui, COLUMN_WIDTHS, |columns| {
@@ -481,7 +470,7 @@ impl<'a> Fx32Widget<'a> {
 }
 
 impl<'a> DataWidget for Fx32Widget<'a> {
-    fn render_value(&mut self, ui: &mut egui::Ui, _types: &Types, state: &mut State) {
+    fn render_value(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         ui.horizontal(|ui| {
             let mut show_hex =
                 ui.ctx().data_mut(|data| data.get_temp::<bool>(self.show_hex_id).unwrap_or(false));
@@ -500,7 +489,7 @@ impl<'a> DataWidget for Fx32Widget<'a> {
                 self.instance.write(state, value.to_le_bytes().to_vec());
             }
             if !text_edit.has_focus() {
-                let value = i32::from_le_bytes(self.instance.data().try_into().unwrap_or([0; 4]));
+                let value = self.instance.as_int::<i32>(types).unwrap();
                 text = if show_hex {
                     format!("{:#x}", value)
                 } else {
@@ -559,12 +548,12 @@ impl AsDataWidget for type_crawler::EnumDecl {
 impl<'a> DataWidget for EnumWidget<'a> {
     fn render_value(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         let enum_type = type_crawler::TypeKind::Enum(self.enum_decl.clone());
-        let source = self.instance.slice(types, &enum_type, 0);
+        let source = self.instance.slice(types, &enum_type, 0, None);
 
         let size = self.enum_decl.size();
         let mut bytes = [0u8; 8];
         if source.data().len() >= size {
-            bytes[0..size].copy_from_slice(source.data());
+            bytes[0..size].copy_from_slice(&source.data());
         }
 
         let mut value = i64::from_le_bytes(bytes);
@@ -627,11 +616,13 @@ impl<'a> StructWidget<'a> {
         ui.heading(self.struct_decl.name().unwrap_or("Unnamed Struct"));
         for field in fields {
             let offset = field.offset_bytes();
-            let mut field_instance = self.instance.slice(types, field.kind(), offset);
-            if let Some(width) = field.bit_field_width() {
+            let bit_field_range = if let Some(width) = field.bit_field_width() {
                 let start = (field.offset_bits() - offset * 8) as u8;
-                field_instance.set_bit_field_range(start..start + width);
-            }
+                Some(start..start + width)
+            } else {
+                None
+            };
+            let field_instance = self.instance.slice(types, field.kind(), offset, bit_field_range);
 
             ui.push_id(offset, |ui| {
                 let mut widget = field.kind().as_data_widget(ui, types, field_instance);
@@ -735,10 +726,8 @@ impl<'a> DataWidget for UnionWidget<'a> {
     fn render_compound(&mut self, ui: &mut egui::Ui, types: &Types, state: &mut State) {
         ui.indent("union_compound", |ui| {
             for (i, field) in self.union_decl.fields().iter().enumerate() {
-                let mut field_instance = self.instance.slice(types, field.kind(), 0);
-                if let Some(width) = field.bit_field_width() {
-                    field_instance.set_bit_field_range(0..width);
-                }
+                let bit_field_range = field.bit_field_width().map(|width| 0..width);
+                let field_instance = self.instance.slice(types, field.kind(), 0, bit_field_range);
 
                 ui.push_id(i, |ui| {
                     let mut widget = field.kind().as_data_widget(ui, types, field_instance);

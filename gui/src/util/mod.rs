@@ -1,3 +1,2 @@
-pub mod bitwriter;
+pub mod bitvec;
 pub mod read;
-pub mod vec;
