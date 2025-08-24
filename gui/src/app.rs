@@ -11,6 +11,7 @@ use eframe::egui::{self, Color32, Widget};
 use crate::{
     config::Config,
     tasks::load_types::{LoadTypesTask, LoadTypesTaskOptions},
+    ui::text_field_list::TextFieldList,
     views::{View, ph, st},
 };
 
@@ -153,95 +154,21 @@ impl eframe::App for DsvApp {
                         self.save_config();
                     }
                     ui.separator();
-                    let mut remove_index = None;
-                    egui_extras::TableBuilder::new(ui)
-                        .id_salt("dsv_include_paths")
-                        .striped(true)
-                        .column(egui_extras::Column::exact(220.0))
-                        .column(egui_extras::Column::exact(50.0))
-                        .body(|mut body| {
-                            for i in 0..self.config.types.include_paths.len() {
-                                body.row(20.0, |mut row| {
-                                    row.col(|ui| {
-                                        if egui::TextEdit::singleline(
-                                            &mut self.config.types.include_paths[i],
-                                        )
-                                        .desired_width(200.0)
-                                        .hint_text("Include path")
-                                        .show(ui)
-                                        .response
-                                        .lost_focus()
-                                        {
-                                            self.save_config();
-                                        }
-                                    });
-                                    row.col(|ui| {
-                                        if egui::Button::new("Remove")
-                                            .wrap_mode(egui::TextWrapMode::Extend)
-                                            .ui(ui)
-                                            .clicked()
-                                        {
-                                            remove_index = Some(i);
-                                        }
-                                    });
-                                });
-                            }
-                            body.row(20.0, |mut row| {
-                                row.col(|ui| {
-                                    if ui.button("Add include path").clicked() {
-                                        self.config.types.include_paths.push(String::new());
-                                    }
-                                });
-                            });
-                        });
-                    if let Some(index) = remove_index {
-                        self.config.types.include_paths.remove(index);
+                    if TextFieldList::new("dsv_include_paths", &mut self.config.types.include_paths)
+                        .with_field_hint("Include path")
+                        .with_add_button_text("Add include path")
+                        .show(ui)
+                        .changed
+                    {
                         self.save_config();
                     }
                     ui.separator();
-                    let mut remove_index = None;
-                    egui_extras::TableBuilder::new(ui)
-                        .id_salt("dsv_ignore_paths")
-                        .striped(true)
-                        .column(egui_extras::Column::exact(220.0))
-                        .column(egui_extras::Column::exact(50.0))
-                        .body(|mut body| {
-                            for i in 0..self.config.types.ignore_paths.len() {
-                                body.row(20.0, |mut row| {
-                                    row.col(|ui| {
-                                        if egui::TextEdit::singleline(
-                                            &mut self.config.types.ignore_paths[i],
-                                        )
-                                        .desired_width(200.0)
-                                        .hint_text("Ignore path")
-                                        .show(ui)
-                                        .response
-                                        .lost_focus()
-                                        {
-                                            self.save_config();
-                                        }
-                                    });
-                                    row.col(|ui| {
-                                        if egui::Button::new("Remove")
-                                            .wrap_mode(egui::TextWrapMode::Extend)
-                                            .ui(ui)
-                                            .clicked()
-                                        {
-                                            remove_index = Some(i);
-                                        }
-                                    });
-                                });
-                            }
-                            body.row(20.0, |mut row| {
-                                row.col(|ui| {
-                                    if ui.button("Add ignore path").clicked() {
-                                        self.config.types.ignore_paths.push(String::new());
-                                    }
-                                });
-                            });
-                        });
-                    if let Some(index) = remove_index {
-                        self.config.types.ignore_paths.remove(index);
+                    if TextFieldList::new("dsv_ignore_paths", &mut self.config.types.ignore_paths)
+                        .with_field_hint("Ignore path")
+                        .with_add_button_text("Add ignore path")
+                        .show(ui)
+                        .changed
+                    {
                         self.save_config();
                     }
                     if ui.button("Save").clicked() {
