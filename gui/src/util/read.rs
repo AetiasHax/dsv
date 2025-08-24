@@ -83,7 +83,8 @@ impl<'a> TypeInstance<'a> {
         name: &str,
     ) -> Option<TypeInstance<'a>> {
         match self.ty {
-            type_crawler::TypeKind::Struct(struct_decl) => {
+            type_crawler::TypeKind::Class(struct_decl)
+            | type_crawler::TypeKind::Struct(struct_decl) => {
                 let field = struct_decl.get_field(types, name)?;
                 let ty = field.kind().expand_named(types)?;
                 let offset = field.offset_bytes();
