@@ -89,6 +89,9 @@ impl super::View for View {
     }
 
     fn exit(&mut self) -> Result<()> {
+        if !self.client.is_running() {
+            return Ok(());
+        }
         self.client.send_command(Command::Disconnect)?;
         self.client.join_update_thread();
         Ok(())
