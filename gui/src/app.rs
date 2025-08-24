@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use dsv_core::gdb::client::GdbClient;
-use eframe::egui::{self, Color32, Widget};
+use eframe::egui::{self, Color32};
 
 use crate::{
     config::Config,
@@ -98,9 +98,10 @@ impl eframe::App for DsvApp {
                             self.config.types.ignore_paths.iter().map(|s| s.into()).collect();
                         let options = LoadTypesTaskOptions {
                             project_root,
+                            types: self.types.clone(),
                             include_paths,
                             ignore_paths,
-                            types: self.types.clone(),
+                            short_enums: self.config.types.short_enums,
                         };
                         let mut task = LoadTypesTask::new(options);
                         if let Err(e) = task.run() {
@@ -171,6 +172,11 @@ impl eframe::App for DsvApp {
                     {
                         self.save_config();
                     }
+                    ui.separator();
+                    if ui.checkbox(&mut self.config.types.short_enums, "Short enums").changed() {
+                        self.save_config();
+                    }
+                    ui.separator();
                     if ui.button("Save").clicked() {
                         let file =
                             rfd::FileDialog::new().add_filter("dsv config", &["toml"]).save_file();

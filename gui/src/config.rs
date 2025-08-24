@@ -22,6 +22,8 @@ pub struct TypesConfig {
     pub project_root: String,
     pub include_paths: Vec<String>,
     pub ignore_paths: Vec<String>,
+    #[serde(default)]
+    pub short_enums: bool,
 }
 
 impl Config {
@@ -32,6 +34,7 @@ impl Config {
                 project_root: String::new(),
                 include_paths: Vec::new(),
                 ignore_paths: Vec::new(),
+                short_enums: false,
             },
             games: Table::new(),
         }

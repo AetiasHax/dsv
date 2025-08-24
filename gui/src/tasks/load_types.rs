@@ -9,32 +9,37 @@ use anyhow::{Context, Result};
 use type_crawler::{Env, EnvOptions, TypeCrawler, Types, WordSize};
 
 pub struct LoadTypesTask {
-    decomp_root: PathBuf,
-    include_paths: Vec<PathBuf>,
-    ignore_paths: Vec<PathBuf>,
     types: Arc<Mutex<type_crawler::Types>>,
     status: Arc<Mutex<String>>,
     thread_handle: Option<JoinHandle<()>>,
     terminate_tx: Option<mpsc::Sender<()>>,
+
+    project_root: PathBuf,
+    include_paths: Vec<PathBuf>,
+    ignore_paths: Vec<PathBuf>,
+    short_enums: bool,
 }
 
 pub struct LoadTypesTaskOptions {
+    pub types: Arc<Mutex<type_crawler::Types>>,
+
     pub project_root: PathBuf,
     pub include_paths: Vec<PathBuf>,
     pub ignore_paths: Vec<PathBuf>,
-    pub types: Arc<Mutex<type_crawler::Types>>,
+    pub short_enums: bool,
 }
 
 impl LoadTypesTask {
     pub fn new(options: LoadTypesTaskOptions) -> Self {
         LoadTypesTask {
-            decomp_root: options.project_root,
-            include_paths: options.include_paths,
-            ignore_paths: options.ignore_paths,
+            project_root: options.project_root,
             types: options.types,
             status: Arc::new(Mutex::new(String::new())),
             thread_handle: None,
             terminate_tx: None,
+            include_paths: options.include_paths,
+            ignore_paths: options.ignore_paths,
+            short_enums: options.short_enums,
         }
     }
 
@@ -44,10 +49,12 @@ impl LoadTypesTask {
             return Ok(());
         }
 
-        let include_paths = self.include_paths.to_vec();
         let types_result = self.types.clone();
         let status = self.status.clone();
-        let headers = self.find_header_files(&self.decomp_root);
+
+        let include_paths = self.include_paths.to_vec();
+        let headers = self.find_header_files(&self.project_root);
+        let short_enums = self.short_enums;
 
         let (terminate_tx, terminate_rx) = mpsc::channel();
         self.terminate_tx = Some(terminate_tx);
@@ -55,7 +62,7 @@ impl LoadTypesTask {
         self.thread_handle = Some(std::thread::spawn(move || {
             let env = Env::new(EnvOptions {
                 word_size: WordSize::Size32,
-                short_enums: false,
+                short_enums,
                 signed_char: true,
             });
             let mut crawler =
